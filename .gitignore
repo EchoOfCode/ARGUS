@@ -1,0 +1,17 @@
+# Root .gitignore for ARGUS
+.env
+*.pyc
+__pycache__/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.apk
+*.aab
+
+# OS
+.DS_Store
+Thumbs.db
