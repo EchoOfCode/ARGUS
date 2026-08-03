@@ -9,7 +9,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:name=".ArgusApplication"
+        android:name="com.example.argus.ArgusApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -20,7 +20,7 @@
 
         <!-- Main Activity -->
         <activity
-            android:name=".ui.MainActivity"
+            android:name="com.example.argus.ui.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -30,13 +30,13 @@
 
         <!-- Edit Event Activity -->
         <activity
-            android:name=".ui.EditEventActivity"
+            android:name="com.example.argus.ui.EditEventActivity"
             android:exported="false"
             android:label="Edit Event" />
 
         <!-- Notification Listener Service -->
         <service
-            android:name=".service.ArgusNotificationListener"
+            android:name="com.example.argus.service.ArgusNotificationListener"
             android:exported="true"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
@@ -46,7 +46,7 @@
 
         <!-- Notification Action Receiver (Yes / Ignore) -->
         <receiver
-            android:name=".receiver.NotificationActionReceiver"
+            android:name="com.example.argus.receiver.NotificationActionReceiver"
             android:exported="false" />
 
     </application>

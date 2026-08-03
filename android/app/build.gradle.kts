@@ -2,7 +2,7 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
-  id("com.google.devtools.ksp") version "2.3.20-1.0.31"
+  id("com.android.legacy-kapt") version libs.versions.androidGradlePlugin
 }
 
 android {
@@ -14,11 +14,6 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-
-        // Room schema export directory
-        ksp {
-            arg("room.schemaLocation", "$projectDir/schemas")
-        }
     }
 
     buildTypes {
@@ -92,7 +87,7 @@ dependencies {
   // Room (local database)
   implementation("androidx.room:room-runtime:2.7.1")
   implementation("androidx.room:room-ktx:2.7.1")
-  ksp("androidx.room:room-compiler:2.7.1")
+  kapt("androidx.room:room-compiler:2.7.1")
 
   // WorkManager (retry queue)
   implementation("androidx.work:work-runtime-ktx:2.10.1")

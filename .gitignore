@@ -3,6 +3,12 @@
 *.pyc
 __pycache__/
 
+# Bridge
+bridge/node_modules/
+bridge/dist/
+bridge/auth_info/
+bridge/argus.db
+
 # Android
 android/.gradle/
 android/build/
