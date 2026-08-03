@@ -2,7 +2,7 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.kotlin.serialization)
-  id("com.android.legacy-kapt") version libs.versions.androidGradlePlugin
+  id("com.google.devtools.ksp") version "2.3.10"
 }
 
 android {
@@ -87,7 +87,7 @@ dependencies {
   // Room (local database)
   implementation("androidx.room:room-runtime:2.7.1")
   implementation("androidx.room:room-ktx:2.7.1")
-  kapt("androidx.room:room-compiler:2.7.1")
+  ksp("androidx.room:room-compiler:2.7.1")
 
   // WorkManager (retry queue)
   implementation("androidx.work:work-runtime-ktx:2.10.1")
