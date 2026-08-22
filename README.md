@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🤖 ARGUS
+#  ARGUS
 ### **Autonomous Real-time General Utility System**
 *Your Personal AI Executive Assistant, Second Brain & Communication Hub on WhatsApp.*
 
