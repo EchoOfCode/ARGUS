@@ -11,6 +11,8 @@ import {
   isChatExempted,
   getDb,
   saveChatDirectory,
+  getActiveAutopilotRule,
+  incrementAutopilotCount,
 } from "./db.js";
 import {
   sendText,
@@ -229,6 +231,7 @@ export async function handleMessage(
   // Derive chat name / group name
   const chatName = await resolveChatName(sock, chatJid, senderName);
   const isCommandChat = isDedicatedCommandChat(chatJid, chatName, config);
+  const isGroup = chatJid.endsWith("@g.us");
 
   const rawMsg = extractRawMessage(msg);
 
@@ -285,6 +288,58 @@ export async function handleMessage(
       return;
     }
     return;
+  }
+
+  // ─── Check Auto-Pilot Persona Auto-Responder for 1-on-1 DMs ───
+  if (!isGroup && !isFromMe && senderJid) {
+    const autopilotRule = getActiveAutopilotRule(senderJid);
+    if (autopilotRule && autopilotRule.status === "active") {
+      console.log(`🤖 [Auto-Pilot] Triggered for ${senderName || senderJid} (${autopilotRule.name})`);
+
+      try {
+        // 1. Simulate human typing presence & natural typing delay (2.5s)
+        await sock.sendPresenceUpdate("composing", senderJid).catch(() => {});
+        await new Promise((r) => setTimeout(r, 2500));
+
+        // 2. Fetch last 6 messages from this conversation for authentic tone matching
+        const recentHistory = getDb()
+          .prepare(
+            "SELECT message_text as text, is_from_me, timestamp FROM message_log WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 6"
+          )
+          .all(chatJid) as any[];
+        recentHistory.reverse();
+
+        // 3. Generate personalized response acting as Yusuf
+        const personaRes = await callBrain(config, "/autopilot/generate-reply", {
+          chat_jid: chatJid,
+          sender_name: senderName || autopilotRule.name || "Friend",
+          incoming_message: text,
+          recent_chat_history: recentHistory,
+          custom_instruction: autopilotRule.custom_prompt,
+        });
+
+        if (personaRes && personaRes.reply_text) {
+          // 4. Send response to sender
+          await sendText(sock, senderJid, personaRes.reply_text, config);
+          incrementAutopilotCount(senderJid);
+
+          // 5. Mirror transparent confirmation card back to dedicated ARGUS command group
+          const mirrorMsg = [
+            `🤖 *[Auto-Pilot Active]* Replied to *${senderName || autopilotRule.name}* as you:`,
+            `📩 *Incoming:* "${text}"`,
+            `💬 *Reply Sent:* "${personaRes.reply_text}"`,
+          ].join("\n");
+          await sendText(sock, config.myJid, mirrorMsg, config);
+
+          console.log(`🚀 [Auto-Pilot] Sent reply to ${senderName || senderJid}: "${personaRes.reply_text}"`);
+          return;
+        }
+      } catch (autoErr) {
+        logger.error({ autoErr, senderJid }, "Error in Auto-Pilot persona response");
+      } finally {
+        await sock.sendPresenceUpdate("paused", senderJid).catch(() => {});
+      }
+    }
   }
 
   // ─── Incoming messages from others (passive scan) ───────────

@@ -85,7 +85,13 @@
 * Speak directly into WhatsApp mic in your `ARGUS` group.
 * Voice notes are automatically transcribed via Groq Whisper (`whisper-large-v3`) and executed instantly.
 
-### 🚫 7. Granular Chat Exemption
+### 🤖 8. Auto-Pilot Digital Clone Persona
+* **Autonomous 1-on-1 Auto-Responder:** Turn on auto-pilot for specific contacts or global busy periods (`autopilot on for Harshith` or `autopilot on: studying for exams`).
+* **Persona & Tone Matching:** Reads past conversation history and your Second Brain knowledge base to reply in your personal, authentic texting style.
+* **Transparent Activity Mirror:** Every auto-pilot response is mirrored back to your `ARGUS` command group in real-time.
+* **Realistic Typing Simulation:** Emulates real-world typing indicators (`composing`) with dynamic natural delays.
+
+### 🚫 9. Granular Chat Exemption
 * Stop ARGUS from logging spammy chats: `exempt [Group Name]` / `unexempt [Group Name]` / `exempted chats`.
 
 ---
@@ -213,6 +219,10 @@ docker attach argus-bridge
 | **📬 Emails (IMAP)** | `read my emails` / `emails` | Fetches recent unread emails |
 | | `summarize email #1` | Deep executive breakdown of specific email |
 | | `search email invoice` | Queries inbox via IMAP |
+| **🤖 Auto-Pilot Persona** | `autopilot on for Harshith` | Auto-replies as you in your voice to that contact |
+| | `autopilot on: studying for exams` | Global busy auto-responder for all DMs |
+| | `autopilot off` / `autopilot off Harshith` | Disables auto-pilot |
+| | `autopilot status` / `autopilot` | Views active auto-pilot rules & stats |
 | **📅 Calendar & Events** | `schedule Project Review tomorrow at 4pm` | Generates 1-tap Google Calendar add link |
 | | `events` / `calendar` | Views upcoming schedule |
 | | `cancel event #1` | Removes event from calendar |

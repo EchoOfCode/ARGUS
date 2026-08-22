@@ -405,3 +405,78 @@ def synthesize_memory_answer(question: str, memories: List[Dict[str, Any]]) -> s
     )
 
     return (completion.choices[0].message.content or "").strip()
+
+
+AUTOPILOT_PERSONA_PROMPT = """\
+You are an autonomous AI clone acting and speaking DIRECTLY as Yusuf (a CSE student at PES University, Bangalore).
+You are responding to an incoming WhatsApp message from a friend, classmate, or colleague.
+
+YOUR PERSONA & SPEAKING STYLE:
+• You ARE Yusuf. Never refer to yourself in the third person or say "as an AI assistant" or "ARGUS".
+• Tone: Natural, chill, casual, authentic WhatsApp texting style.
+• Style: Short, conversational, friendly. Use natural phrasing (e.g. "hey", "yeah", "sounds good", "give me a sec", "got it"). Avoid overly formal corporate speak or robotic greetings.
+• Ground-truth Knowledge: Use the provided Second Brain facts and personal schedule to give accurate answers. Never make up commitments or facts.
+• Context Instruction: If a custom situation is provided (e.g. "studying for exams", "busy in meeting"), naturally reflect that (e.g. "hey studying for exams rn, will text u back in a bit!").
+
+RULES:
+1. Return ONLY the exact text message to be sent via WhatsApp.
+2. Do not include markdown code fences, prefixes like "Yusuf:", or quotes around the reply.
+3. Keep it brief (1-3 sentences max, like a real WhatsApp text).
+"""
+
+
+@rate_limited()
+def generate_autopilot_persona_reply(
+    incoming_message: str,
+    sender_name: str = "Friend",
+    recent_history: Optional[List[Dict[str, Any]]] = None,
+    personal_memories: Optional[List[Dict[str, Any]]] = None,
+    custom_instruction: Optional[str] = None,
+) -> str:
+    """Generate an authentic WhatsApp reply acting as Yusuf."""
+    client = _get_client()
+    model = _get_model()
+
+    context_parts = []
+    if sender_name:
+        context_parts.append(f"Sender Name: {sender_name}")
+
+    if custom_instruction:
+        context_parts.append(f"Your Current Situation/Note: {custom_instruction}")
+
+    if personal_memories:
+        facts = "\n".join(f"- {m.get('fact_text')}" for m in personal_memories)
+        context_parts.append(f"Your Second Brain Context / Facts:\n{facts}")
+
+    if recent_history:
+        history_lines = []
+        for msg in recent_history[-6:]:
+            sender_label = "You (Yusuf)" if msg.get("is_from_me") else sender_name
+            history_lines.append(f"{sender_label}: {msg.get('text') or msg.get('message_text')}")
+        context_parts.append("Recent Chat History:\n" + "\n".join(history_lines))
+
+    context_parts.append(f"Latest Incoming Message from {sender_name}:\n{incoming_message}")
+    user_prompt = "\n\n".join(context_parts)
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": AUTOPILOT_PERSONA_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.7,
+            max_tokens=200,
+        )
+        raw = response.choices[0].message.content or ""
+        cleaned = raw.strip()
+        cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
+        if cleaned.startswith('"') and cleaned.endswith('"'):
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
+    except Exception as e:
+        logger.error(f"Failed to generate autopilot reply: {e}", exc_info=True)
+        if custom_instruction:
+            return f"Hey, I'm {custom_instruction.lower()} right now! Will get back to you shortly."
+        return "Hey! Tied up with something right now, will text you back in a bit."
+

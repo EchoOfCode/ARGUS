@@ -100,6 +100,23 @@ def test_email_endpoint_graceful():
     print(f"✅ /emails/unread graceful response: count={data['count']}, configured={data['is_configured']}")
 
 
+def test_autopilot_endpoint():
+    res = client.post(
+        "/autopilot/generate-reply",
+        json={
+            "chat_jid": "918088421593@s.whatsapp.net",
+            "sender_name": "Harshith",
+            "incoming_message": "Hey bro, are you coming to college today?",
+            "custom_instruction": "busy working on project demo",
+        },
+        headers=HEADERS,
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["reply_text"] is not None and len(data["reply_text"]) > 0
+    print(f"✅ /autopilot/generate-reply passed: \"{data['reply_text']}\"")
+
+
 if __name__ == "__main__":
     print("🚀 Running ARGUS Backend Verification Tests...")
     test_health()
@@ -108,4 +125,5 @@ if __name__ == "__main__":
     test_intent_classification()
     test_ask_endpoint()
     test_email_endpoint_graceful()
+    test_autopilot_endpoint()
     print("\n🎉 ALL TESTS PASSED SUCCESSFULLY!")

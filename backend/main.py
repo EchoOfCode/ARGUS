@@ -34,6 +34,7 @@ from groq_client import (
     answer_question,
     classify_and_tag_memory,
     extract_event,
+    generate_autopilot_persona_reply,
     generate_briefing,
     summarize_email,
     summarize_messages,
@@ -50,6 +51,8 @@ from memory import (
 from models import (
     AskRequest,
     AskResponse,
+    AutopilotReplyRequest,
+    AutopilotReplyResponse,
     BriefingRequest,
     BriefingResponse,
     EmailItem,
@@ -481,6 +484,35 @@ async def transcribe_audio_endpoint(
     except Exception as e:
         logger.error("Audio transcription failed: %s", e)
         return TranscribeAudioResponse(transcription="", success=False, error=str(e))
+
+
+# ─── Auto-Pilot Persona Auto-Responder ──────────────────────────
+
+@app.post("/autopilot/generate-reply", response_model=AutopilotReplyResponse)
+async def autopilot_reply_endpoint(
+    request: AutopilotReplyRequest,
+    x_argus_secret: str | None = Header(None),
+) -> AutopilotReplyResponse:
+    """Generate an authentic WhatsApp reply acting as Yusuf."""
+    verify_secret(x_argus_secret)
+
+    # 1. Fetch relevant memories from Second Brain based on the incoming message
+    relevant_memories = recall_memories(request.incoming_message, limit=3)
+
+    # 2. Generate persona reply
+    reply_text = generate_autopilot_persona_reply(
+        incoming_message=request.incoming_message,
+        sender_name=request.sender_name or "Friend",
+        recent_history=request.recent_chat_history,
+        personal_memories=relevant_memories,
+        custom_instruction=request.custom_instruction,
+    )
+
+    return AutopilotReplyResponse(
+        reply_text=reply_text,
+        confidence=0.95,
+        should_send=True,
+    )
 
 
 # ─── Health Check ───────────────────────────────────────────────

@@ -26,6 +26,10 @@ import {
   getUpcomingConfirmedEvents,
   deleteConfirmedEvent,
   confirmEvent,
+  enableAutopilot,
+  disableAutopilot,
+  disableAllAutopilot,
+  listAutopilotRules,
 } from "./db.js";
 import {
   sendText,
@@ -204,6 +208,24 @@ export async function handleSelfChatMessage(
     } else {
       await sendError(sock, chatJid, `Event #${id} not found.`, config);
     }
+    return;
+  }
+
+  // ─── Auto-Pilot Persona Commands ────────────────────────────
+  if (normalized === "autopilot" || normalized === "autopilot status" || normalized === "autopilot list") {
+    await handleAutopilotStatus(sock, chatJid, config);
+    return;
+  }
+
+  if (normalized.startsWith("autopilot on") || normalized.startsWith("enable autopilot")) {
+    const raw = text.replace(/^(autopilot\s+on|enable\s+autopilot)\s*:?\s*/i, "").trim();
+    await handleEnableAutopilot(sock, chatJid, raw, config);
+    return;
+  }
+
+  if (normalized.startsWith("autopilot off") || normalized.startsWith("disable autopilot") || normalized === "stop autopilot") {
+    const raw = text.replace(/^(autopilot\s+off|disable\s+autopilot|stop\s+autopilot)\s*/i, "").trim();
+    await handleDisableAutopilot(sock, chatJid, raw, config);
     return;
   }
 
@@ -1020,9 +1042,108 @@ async function handleScheduleEvent(sock: WASocket, chatJid: string, raw: string,
   }
 }
 
+async function handleAutopilotStatus(sock: WASocket, chatJid: string, config: Config): Promise<void> {
+  const rules = listAutopilotRules();
+  if (rules.length === 0) {
+    const msg = [
+      `🤖 *ARGUS Auto-Pilot Persona is currently OFF.*`,
+      ``,
+      `*How to enable:*`,
+      `• *autopilot on for [Contact]* — Auto-replies as you to that person`,
+      `  _Example:_ *autopilot on for Harshith*`,
+      `• *autopilot on: [reason]* — Global busy mode for all 1-on-1 DMs`,
+      `  _Example:_ *autopilot on: studying for exams, reply casually*`,
+    ].join("\n");
+    await sendText(sock, chatJid, msg, config);
+    return;
+  }
+
+  const lines = rules.map((r) => {
+    const promptStr = r.custom_prompt ? `\n   📝 _Context:_ "${r.custom_prompt}"` : "";
+    return `👤 *${r.name}* (${r.jid})\n   ⚡ _Replies Sent:_ ${r.auto_reply_count}${promptStr}`;
+  });
+
+  const msg = [
+    `🤖 *Active Auto-Pilot Persona Rules (${rules.length}):*`,
+    `────────────────────────────`,
+    lines.join("\n\n"),
+    `────────────────────────────`,
+    `_To disable:_ *autopilot off [Person]* or *autopilot off all*`,
+  ].join("\n");
+
+  await sendText(sock, chatJid, msg, config);
+}
+
+async function handleEnableAutopilot(sock: WASocket, chatJid: string, raw: string, config: Config): Promise<void> {
+  // Check if "for [Contact]" or "for [Contact]: [prompt]"
+  const forMatch = raw.match(/^for\s+([^:]+)(?::\s*(.*))?$/i);
+  if (forMatch) {
+    const targetQuery = forMatch[1].trim();
+    const customPrompt = forMatch[2] ? forMatch[2].trim() : undefined;
+
+    const chat = findChatByNameOrQuery(targetQuery);
+    if (!chat) {
+      await sendError(
+        sock,
+        chatJid,
+        `Could not find contact "${targetQuery}".\n_Type *contacts* to see your directory, or *save contact [Name] [Phone]*._`,
+        config
+      );
+      return;
+    }
+
+    enableAutopilot(chat.jid, chat.name, customPrompt);
+    const promptStr = customPrompt ? `\n📝 *Custom Context:* "${customPrompt}"` : "";
+    await sendText(
+      sock,
+      chatJid,
+      `🤖 *Auto-Pilot ENABLED for ${chat.name}!*\nARGUS will now autonomously reply to incoming DMs from ${chat.name} as you in your personal voice.${promptStr}\n\n_To turn off:_ *autopilot off for ${chat.name}*`,
+      config
+    );
+    return;
+  }
+
+  // Global busy mode: "autopilot on: studying for exams"
+  const globalPrompt = raw.replace(/^on\s*:?\s*/i, "").trim() || "busy right now";
+  enableAutopilot("GLOBAL", "Global Busy Mode", globalPrompt);
+  await sendText(
+    sock,
+    chatJid,
+    `🤖 *Global Auto-Pilot Busy Mode ENABLED!*\nARGUS will autonomously answer any incoming 1-on-1 DMs as you in your personal voice.\n📝 *Context:* "${globalPrompt}"\n\n_To turn off:_ *autopilot off*`,
+    config
+  );
+}
+
+async function handleDisableAutopilot(sock: WASocket, chatJid: string, raw: string, config: Config): Promise<void> {
+  if (!raw || raw.toLowerCase() === "all" || raw.toLowerCase() === "global") {
+    disableAllAutopilot();
+    await sendText(sock, chatJid, "🛑 *Auto-Pilot disabled for all contacts.*", config);
+    return;
+  }
+
+  const targetQuery = raw.replace(/^for\s+/i, "").trim();
+  const chat = findChatByNameOrQuery(targetQuery);
+  const targetJid = chat ? chat.jid : targetQuery;
+  const targetName = chat ? chat.name : targetQuery;
+
+  const success = disableAutopilot(targetJid);
+  if (success) {
+    await sendText(sock, chatJid, `🛑 *Auto-Pilot disabled for ${targetName}.*`, config);
+  } else {
+    disableAllAutopilot();
+    await sendText(sock, chatJid, `🛑 *Auto-Pilot disabled.*`, config);
+  }
+}
+
 async function sendHelpMessage(sock: WASocket, jid: string, config: Config): Promise<void> {
   const help = [
     `🤖 *ARGUS Executive Assistant — Capabilities:*`,
+    ``,
+    `🤖 *Auto-Pilot Digital Clone Persona:*`,
+    `• "autopilot on for [Person]" — Auto-replies to their incoming DMs as you`,
+    `• "autopilot on: [busy reason]" — Global busy auto-responder`,
+    `• "autopilot off" — Stops auto-pilot`,
+    `• "autopilot status" — View active auto-pilot rules`,
     ``,
     `📅 *Google Calendar Sync:*`,
     `• "schedule [event] tomorrow at 3pm" — Adds event & gives 1-tap Google Calendar link`,

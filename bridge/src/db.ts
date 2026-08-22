@@ -79,12 +79,23 @@ export function initDatabase(dbPath: string): Database.Database {
       sent_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS autopilot_rules (
+      jid TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      custom_prompt TEXT,
+      auto_reply_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_replied_at TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_at, status);
     CREATE INDEX IF NOT EXISTS idx_todos_chat ON todos(chat_jid, completed);
     CREATE INDEX IF NOT EXISTS idx_messages_chat ON message_log(chat_jid, timestamp);
     CREATE INDEX IF NOT EXISTS idx_messages_text ON message_log(message_text);
     CREATE INDEX IF NOT EXISTS idx_outbox_status ON pending_outbox(status);
     CREATE INDEX IF NOT EXISTS idx_pending_events_status ON pending_events(status);
+    CREATE INDEX IF NOT EXISTS idx_autopilot_status ON autopilot_rules(status);
   `);
 
   try {
@@ -552,3 +563,69 @@ export function cancelPendingOutbox(id: number): void {
     )
     .run(id);
 }
+
+// ─── Auto-Pilot Rules ──────────────────────────────────────────
+
+export interface AutopilotRule {
+  jid: string;
+  name: string;
+  status: string;
+  custom_prompt: string | null;
+  auto_reply_count: number;
+  created_at: string;
+  last_replied_at: string | null;
+}
+
+export function enableAutopilot(jid: string, name: string, customPrompt?: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO autopilot_rules (jid, name, status, custom_prompt, last_replied_at)
+       VALUES (?, ?, 'active', ?, datetime('now'))
+       ON CONFLICT(jid) DO UPDATE SET
+         status = 'active',
+         name = excluded.name,
+         custom_prompt = excluded.custom_prompt,
+         last_replied_at = datetime('now')`
+    )
+    .run(jid, name, customPrompt || null);
+}
+
+export function disableAutopilot(jid: string): boolean {
+  const result = getDb()
+    .prepare("DELETE FROM autopilot_rules WHERE jid = ? OR jid = 'GLOBAL'")
+    .run(jid);
+  return result.changes > 0;
+}
+
+export function disableAllAutopilot(): boolean {
+  const result = getDb().prepare("DELETE FROM autopilot_rules").run();
+  return result.changes > 0;
+}
+
+export function getActiveAutopilotRule(jid: string): AutopilotRule | null {
+  // Check specific contact rule first, then fallback to GLOBAL rule
+  const specific = getDb()
+    .prepare("SELECT * FROM autopilot_rules WHERE jid = ? AND status = 'active'")
+    .get(jid) as AutopilotRule | undefined;
+  if (specific) return specific;
+
+  const global = getDb()
+    .prepare("SELECT * FROM autopilot_rules WHERE jid = 'GLOBAL' AND status = 'active'")
+    .get() as AutopilotRule | undefined;
+  return global || null;
+}
+
+export function listAutopilotRules(): AutopilotRule[] {
+  return getDb()
+    .prepare("SELECT * FROM autopilot_rules ORDER BY created_at DESC")
+    .all() as AutopilotRule[];
+}
+
+export function incrementAutopilotCount(jid: string): void {
+  getDb()
+    .prepare(
+      "UPDATE autopilot_rules SET auto_reply_count = auto_reply_count + 1, last_replied_at = datetime('now') WHERE jid = ? OR jid = 'GLOBAL'"
+    )
+    .run(jid);
+}
+

@@ -269,3 +269,23 @@ class TranscribeAudioResponse(BaseModel):
     transcription: str
     success: bool
     error: Optional[str] = None
+
+
+# ─── Auto-Pilot Persona Auto-Responder ──────────────────────────
+
+class AutopilotReplyRequest(BaseModel):
+    """Request to generate an auto-pilot reply acting as the user."""
+
+    chat_jid: str
+    sender_name: Optional[str] = "Friend"
+    incoming_message: str
+    recent_chat_history: List[Dict[str, Any]] = []
+    custom_instruction: Optional[str] = None
+
+
+class AutopilotReplyResponse(BaseModel):
+    """Response containing the generated personal reply."""
+
+    reply_text: str
+    confidence: float = 0.95
+    should_send: bool = True
