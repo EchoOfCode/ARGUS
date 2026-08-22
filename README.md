@@ -15,8 +15,7 @@
 
 <br/>
 
-### 🎬 **[Watch 60-Second Apple Keynote Commercial (1080p)](assets/argus_demo.mp4)**
-*(Hyper-realistic titanium iPhone product showcase featuring WhatsApp Second Brain, Outbound Drafter, Gmail Triage & Calendar Sync)*
+<img src="assets/argus_demo.gif" alt="ARGUS Apple Keynote Demo" width="100%" style="border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.8);" />
 
 </div>
 
