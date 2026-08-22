@@ -389,10 +389,11 @@ export async function handleSelfChatMessage(
 
   // ─── Outbound Message Commands ("can u send message to...", "tell [group] [msg]") ───
   if (
-    /^(can\s+u|can\s+you|please|could\s+you)?\s*(send\s+(a\s+)?message\s+to|send\s+to|tell|message|text|dm|draft\s+(a\s+)?message\s+to|draft\s+to)\s+/i.test(normalized)
+    !/^tell\s+(me|us|a\s+|about\s+|why\s+|how\s+|what\s+|where\s+|who\s+|when\s+)/i.test(normalized) &&
+    /^(can\s+u|can\s+you|please|could\s+you|i\s+wanna|i\s+want\s+to|i\s+need\s+to)?\s*(send\s+(a\s+)?message\s+to|send\s+to|tell|message|text|dm|draft\s+(a\s+)?message\s+to|draft\s+to)\s+/i.test(normalized)
   ) {
-    await handleOutgoingMessageCommand(sock, text, chatJid, config);
-    return;
+    const handled = await handleOutgoingMessageCommand(sock, text, chatJid, config);
+    if (handled) return;
   }
 
   // ─── AI Intent Classification & Execution ───────────────────
@@ -898,8 +899,8 @@ async function handleOutgoingMessageCommand(
   text: string,
   chatJid: string,
   config: Config
-): Promise<void> {
-  const isExplicitDraft = /^(can\s+u|can\s+you|please|could\s+you)?\s*(draft\s+(a\s+)?message\s+to|draft\s+to)\s+/i.test(text);
+): Promise<boolean> {
+  const isExplicitDraft = /^(can\s+u|can\s+you|please|could\s+you)?\s*(draft\s+(a\s+)?message\s+to|draft\s+to|send\s+(a\s+)?message\s+to|send\s+to)\s+/i.test(text);
 
   let target = "";
   let rawContent = "";
@@ -931,7 +932,7 @@ async function handleOutgoingMessageCommand(
         `📝 What message would you like to send to *${singleContact.name}*?\n_(Just text your message here directly)_`,
         config
       );
-      return;
+      return true;
     }
 
     // If there's a colon or hyphen e.g. "Harshith: let's meet at 7" or "Harshith - how are you"
@@ -954,13 +955,16 @@ async function handleOutgoingMessageCommand(
   }
 
   if (!target && !rawContent) {
-    await sendError(
-      sock,
-      chatJid,
-      "Example: *tell noclue I'll be 10 minutes late* or *can u send message to Harshith about moving meeting to 7*",
-      config
-    );
-    return;
+    if (isExplicitDraft) {
+      await sendError(
+        sock,
+        chatJid,
+        "Example: *tell noclue I'll be 10 minutes late* or *can u send message to Harshith about moving meeting to 7*",
+        config
+      );
+      return true;
+    }
+    return false;
   }
 
   // If user only gave a target contact (e.g. "Harshith" with no content)
@@ -979,28 +983,31 @@ async function handleOutgoingMessageCommand(
         `📝 What message would you like to send to *${foundTarget.name}*?\n_(Just text your message here directly)_`,
         config
       );
-      return;
+      return true;
     }
+    return false;
   }
 
   const found = findChatByNameOrQuery(target);
   if (!found) {
-    await sendText(
-      sock,
-      chatJid,
-      `🔍 Could not find *${target}* in your WhatsApp contacts directory.\n\n_To add them, type:_ \`save contact ${target} [phone number]\`\n_Example:_ \`save contact ${target} 919876543210\``,
-      config
-    );
-    return;
+    if (isExplicitDraft) {
+      await sendText(
+        sock,
+        chatJid,
+        `🔍 Could not find *${target}* in your WhatsApp contacts directory.\n\n_To add them, type:_ \`save contact ${target} [phone number]\`\n_Example:_ \`save contact ${target} 919876543210\``,
+        config
+      );
+      return true;
+    }
+    return false;
   }
 
   let finalDraft = rawContent;
 
-  // If user asked for an AI draft OR gave a descriptive sentence (e.g. "about...", "explaining...", "asking for..."), use Groq to polish
   if (isExplicitDraft || rawContent.length > 25 || /\b(about|explain|explaining|ask|asking|inform|informing|apologize|apologizing|tell them|moving|rescheduling)\b/i.test(rawContent)) {
     try {
       const askRes = await callBrain(config, "/ask", {
-        question: `Draft a concise, natural, polite WhatsApp message to "${found.name}" regarding: "${rawContent}". Write ONLY the drafted message text itself with no greeting meta, disclaimers, quotes, or placeholders.`,
+        question: `Draft a concise, natural, polite WhatsApp message to "${found.name}" regarding: "${rawContent}". Write ONLY the drafted message text itself with no disclaimers, quotes, or placeholders.`,
       });
       if (askRes && askRes.answer) {
         finalDraft = askRes.answer.replace(/^["']|["']$/g, "").trim();
@@ -1027,6 +1034,7 @@ async function handleOutgoingMessageCommand(
     ].join("\n"),
     config
   );
+  return true;
 }
 
 async function handleListContacts(sock: WASocket, chatJid: string, config: Config): Promise<void> {

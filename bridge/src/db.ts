@@ -283,6 +283,13 @@ export function getRecentActiveChats(limit = 5): Array<{ jid: string; name: stri
     .all(limit) as Array<{ jid: string; name: string; is_group: number; message_count: number }>;
 }
 
+const RESERVED_STOP_WORDS = new Set([
+  "me", "us", "myself", "a", "an", "the", "something", "someone", "everything", "anything",
+  "joke", "story", "song", "time", "date", "weather", "news", "fact", "facts", "more",
+  "why", "how", "what", "where", "who", "when", "today", "tomorrow", "tonight", "now", "later",
+  "argus", "bot", "assistant", "ai"
+]);
+
 export function findChatByNameOrQuery(query: string): { jid: string; name: string } | null {
   const rawQ = query.trim().toLowerCase();
   const cleanedQ = rawQ
@@ -290,7 +297,7 @@ export function findChatByNameOrQuery(query: string): { jid: string; name: strin
     .replace(/[^a-z0-9]/g, "")
     .trim();
 
-  if (!cleanedQ || cleanedQ.length < 2) return null;
+  if (!cleanedQ || cleanedQ.length < 2 || RESERVED_STOP_WORDS.has(cleanedQ)) return null;
 
   // 1. Direct and ranked matching against chat_directory
   const allChats = getDb()
