@@ -35,6 +35,7 @@ class ExtractResponse(BaseModel):
     time: Optional[str] = None
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     raw_text: Optional[str] = None
+    events: Optional[List[Dict[str, Any]]] = None
 
 
 # ─── Intent Classification ──────────────────────────────────────

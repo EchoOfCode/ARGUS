@@ -412,7 +412,10 @@ export async function handleSelfChatMessage(
   }
 
   // ─── Daily Briefing Command ─────────────────────────────────
-  if (/\b(briefing|daily briefing|morning briefing|agenda|today'?s agenda|today)\b/i.test(normalized)) {
+  if (
+    /^(briefing|daily briefing|morning briefing|agenda|today'?s agenda|today agenda)$/i.test(normalized) ||
+    /\b(daily briefing|morning briefing|today'?s agenda|show agenda|my agenda)\b/i.test(normalized)
+  ) {
     await handleDailyBriefing(sock, chatJid, config);
     return;
   }
@@ -423,9 +426,17 @@ export async function handleSelfChatMessage(
     return;
   }
 
-  if (normalized.startsWith("schedule ") || normalized.startsWith("add event ") || normalized.startsWith("create event ")) {
-    const raw = text.replace(/^(schedule|add\s+event|create\s+event)\s+/i, "").trim();
-    await handleScheduleEvent(sock, chatJid, raw, config);
+  if (
+    /^(schedule|add|create|book|new)\s+(an?\s+)?(event|meeting|call|session|appointment)s?\b/i.test(normalized) ||
+    normalized.startsWith("schedule ") ||
+    normalized.startsWith("add event ") ||
+    normalized.startsWith("add a event ") ||
+    normalized.startsWith("add an event ") ||
+    normalized.startsWith("create event ") ||
+    normalized.startsWith("create an event ")
+  ) {
+    const raw = text.replace(/^(schedule|add|create|book|new)\s+(an?\s+)?(event|meeting|call|session|appointment)s?\s*(for|on|at|:)?\s*/i, "").trim();
+    await handleScheduleEvent(sock, chatJid, raw.length > 0 ? raw : text, config);
     return;
   }
 
@@ -621,36 +632,7 @@ export async function handleSelfChatMessage(
       }
 
       case "event": {
-        const extractResult = await callBrain(config, "/extract-event", {
-          source_app: "self-chat",
-          notification_text: text,
-          received_at: new Date().toISOString(),
-        });
-
-        if (extractResult && extractResult.is_event) {
-          const pending = addPendingEvent(
-            chatJid,
-            config.myJid,
-            text,
-            extractResult.title,
-            extractResult.date,
-            extractResult.time,
-            extractResult.confidence
-          );
-
-          await sendEventConfirmation(
-            sock,
-            chatJid,
-            pending.id,
-            extractResult.title || "Event",
-            extractResult.date || "TBD",
-            extractResult.time,
-            null,
-            config
-          );
-        } else {
-          await sendText(sock, chatJid, "🤔 I couldn't find event details with dates/times in that message.", config);
-        }
+        await handleScheduleEvent(sock, chatJid, text, config);
         break;
       }
 
@@ -1314,27 +1296,81 @@ async function handleScheduleEvent(sock: WASocket, chatJid: string, raw: string,
       source_app: "whatsapp",
     });
 
-    if (extractRes && extractRes.is_event && extractRes.date) {
-      const added = addPendingEvent(
-        chatJid,
-        chatJid,
-        raw,
-        extractRes.title || raw,
-        extractRes.date,
-        extractRes.time,
-        extractRes.confidence || 0.9
-      );
-      confirmEvent(added.id);
-      await sendEventAdded(sock, chatJid, extractRes.title || raw, extractRes.date, extractRes.time, config);
-    } else {
-      await sendError(
-        sock,
-        chatJid,
-        "Could not parse event date or time.\nExample: *schedule Meeting with Harshith tomorrow at 4pm*",
-        config
-      );
+    if (extractRes && extractRes.is_event) {
+      const eventList: Array<{ title: string; date: string; time: string | null }> = [];
+      if (Array.isArray(extractRes.events) && extractRes.events.length > 0) {
+        for (const ev of extractRes.events) {
+          if (ev.title && ev.date) {
+            eventList.push({ title: ev.title, date: ev.date, time: ev.time || null });
+          }
+        }
+      }
+      if (eventList.length === 0 && extractRes.date) {
+        eventList.push({
+          title: extractRes.title || raw,
+          date: extractRes.date,
+          time: extractRes.time || null,
+        });
+      }
+
+      if (eventList.length === 1) {
+        const ev = eventList[0];
+        const added = addPendingEvent(
+          chatJid,
+          chatJid,
+          raw,
+          ev.title,
+          ev.date,
+          ev.time,
+          extractRes.confidence || 0.95
+        );
+        confirmEvent(added.id);
+        await sendEventAdded(sock, chatJid, ev.title, ev.date, ev.time, config);
+        return;
+      }
+
+      if (eventList.length > 1) {
+        const cards: string[] = [];
+        for (const ev of eventList) {
+          const added = addPendingEvent(
+            chatJid,
+            chatJid,
+            raw,
+            ev.title,
+            ev.date,
+            ev.time,
+            extractRes.confidence || 0.95
+          );
+          confirmEvent(added.id);
+          const timeStr = ev.time ? ` at ${ev.time}` : " (all day)";
+          const gcalUrl = generateGoogleCalendarUrl(ev.title, ev.date, ev.time);
+          cards.push(`📌 *${ev.title}*\n📅 ${ev.date}${timeStr}\n🔗 ${gcalUrl}`);
+        }
+
+        await sendText(
+          sock,
+          chatJid,
+          [
+            `📅 *${eventList.length} Events Scheduled & Added to Calendar!*`,
+            `────────────────────────────`,
+            cards.join("\n\n"),
+            `────────────────────────────`,
+            `_Tap any link above to add directly to Google Calendar!_`,
+          ].join("\n"),
+          config
+        );
+        return;
+      }
     }
+
+    await sendError(
+      sock,
+      chatJid,
+      "Could not parse event date or time.\nExample: *schedule Meeting with Harshith tomorrow at 4pm*",
+      config
+    );
   } catch (err) {
+    logger.error({ err }, "Failed to schedule event");
     await sendError(sock, chatJid, "Failed to schedule event.", config);
   }
 }
