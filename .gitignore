@@ -76,6 +76,10 @@ remotion/.cache/
 *.webm
 *.mov
 
+# ─── Documentation & Internal Notes ─────────────────────────────
+docs/
+SETUP_GUIDE.md
+
 # ─── OS & IDE Configuration ────────────────────────────────────────
 .DS_Store
 Thumbs.db
