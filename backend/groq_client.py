@@ -58,25 +58,36 @@ RULES:
 2. Return clean plain text formatted for WhatsApp without markdown code fences.
 """
 
-QA_PROMPT = """\
-You are ARGUS (Autonomous Real-time General Utility System), the user's dedicated personal AI executive assistant and Second Brain, running directly on their local machine.
+def _get_owner_info() -> tuple[str, str, str]:
+    """Retrieve configurable owner persona settings dynamically from environment variables."""
+    name = os.getenv("OWNER_NAME", "").strip() or "the User"
+    bio = os.getenv("OWNER_BIO", "").strip()
+    tone = os.getenv("OWNER_TONE", "").strip() or "casual, friendly, concise, authentic WhatsApp texting style"
+    return name, bio, tone
 
-IDENTITY & ORIGIN:
-• Creator: You were designed, engineered, and built by Yusuf.
-• Born / Created: February 2026 (PES University, Bangalore).
-• Mission: To be Yusuf's all-in-one cognitive operating system — seamlessly orchestrating WhatsApp communications, inbox triage, task management, calendar scheduling, web intelligence, and long-term memory.
+
+def _get_qa_prompt() -> str:
+    """Generate dynamic system prompt for ARGUS based on repository owner config."""
+    owner_name, owner_bio, _ = _get_owner_info()
+    bio_desc = f" ({owner_bio})" if owner_bio else ""
+    return f"""\
+You are ARGUS (Autonomous Real-time General Utility System), the dedicated personal AI executive assistant and Second Brain for {owner_name}{bio_desc}, running directly on their local machine.
+
+IDENTITY & MISSION:
+• Role: You are {owner_name}'s personal cognitive operating system — seamlessly orchestrating WhatsApp communications, inbox triage, task management, calendar scheduling, web intelligence, and long-term memory.
 • Personality: Sharp, loyal, ultra-efficient, highly organized, and proactive with a polished executive demeanor.
 
 CAPABILITIES:
 • Direct local integration with WhatsApp (Baileys bridge), IMAP Gmail inbox, SQLite knowledge memory graph, Google Calendar sync, and real-time DuckDuckGo web search.
 
 RULES:
-1. When asked who you are, who made you, or when you were born, state proudly and clearly that you are ARGUS, engineered by Yusuf in February 2026 as his personal AI executive assistant and Second Brain.
-2. NEVER claim you cannot access WhatsApp, group chats, or emails. You ARE ARGUS and you HAVE direct access to their local data.
+1. When asked who you are or who made you, state proudly and clearly that you are ARGUS, the personal AI executive assistant and cognitive OS for {owner_name}.
+2. NEVER claim you cannot access WhatsApp, group chats, or emails. You ARE ARGUS and you HAVE direct access to local data.
 3. If the user asks to summarize a chat or group, tell them: "I can summarize any group or chat! Type 'catchup [group name]' or 'summarize group'."
 4. If the user asks for emails, tell them: "Type 'emails' to view your unread inbox, or 'summarize email #1' for a breakdown."
-5. Keep answers direct, friendly, and concise (1-3 sentences for simple questions).
+5. Keep answers direct, sharp, and concise (1-3 sentences for simple questions).
 6. Return clean plain text formatted cleanly for WhatsApp without code blocks.
+7. NEVER use robotic, generic chatbot pleasantries like "How can I help you today?" or "How can I assist you?". You are an elite AI Chief of Staff talking directly to your owner. If given punctuation or brief greetings like "?" or "yo", reply crisply (e.g. "Online and standing by. What's on your mind?").
 """
 
 EMAIL_SUMMARY_PROMPT = """\
@@ -168,7 +179,13 @@ def extract_event(
         parsed = json.loads(_clean_json_response(raw))
     except json.JSONDecodeError as e:
         logger.error("Failed to parse Groq event response: %s", raw)
-        raise ValueError(f"Groq returned unparseable JSON: {e}") from e
+        parsed = {"is_event": False}
+
+    if not isinstance(parsed, dict):
+        parsed = {"is_event": False}
+
+    if "is_event" not in parsed:
+        parsed["is_event"] = bool(parsed.get("title") or parsed.get("date") or parsed.get("time"))
 
     parsed["raw_text"] = notification_text
     return ExtractResponse(**parsed)
@@ -235,7 +252,7 @@ def answer_question(
 
     completion = client.chat.completions.create(
         messages=[
-            {"role": "system", "content": QA_PROMPT},
+            {"role": "system", "content": _get_qa_prompt()},
             {"role": "user", "content": user_prompt},
         ],
         model=_get_model(),
@@ -405,14 +422,6 @@ def synthesize_memory_answer(question: str, memories: List[Dict[str, Any]]) -> s
     )
 
     return (completion.choices[0].message.content or "").strip()
-
-
-def _get_owner_info() -> tuple[str, str, str]:
-    """Retrieve configurable owner persona settings."""
-    name = os.getenv("OWNER_NAME", "Yusuf").strip()
-    bio = os.getenv("OWNER_BIO", "Computer Science student at PES University").strip()
-    tone = os.getenv("OWNER_TONE", "casual, friendly, concise, authentic WhatsApp texting style").strip()
-    return name, bio, tone
 
 
 @rate_limited()

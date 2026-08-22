@@ -29,7 +29,7 @@ class ExtractRequest(BaseModel):
 class ExtractResponse(BaseModel):
     """Response body for POST /extract-event."""
 
-    is_event: bool
+    is_event: bool = False
     title: Optional[str] = None
     date: Optional[str] = None
     time: Optional[str] = None

@@ -934,11 +934,11 @@ async function handleOutgoingMessageCommand(
       return;
     }
 
-    // If there's a colon e.g. "Harshith: let's meet at 7"
-    const colonIdx = cleanCmd.indexOf(":");
-    if (colonIdx > 0 && colonIdx < 30) {
-      target = cleanCmd.substring(0, colonIdx).trim();
-      rawContent = cleanCmd.substring(colonIdx + 1).trim();
+    // If there's a colon or hyphen e.g. "Harshith: let's meet at 7" or "Harshith - how are you"
+    const colonOrDashMatch = cleanCmd.match(/^([a-zA-Z0-9_\.\s]{1,30}?)\s*[:\-–—]\s*(.+)$/);
+    if (colonOrDashMatch) {
+      target = colonOrDashMatch[1].trim();
+      rawContent = colonOrDashMatch[2].trim();
     } else {
       // Look for split words: "about", "that", "saying", "asking", "to"
       const splitMatch = cleanCmd.match(/^([a-zA-Z0-9_\-\.\s]{1,25}?)\s+(about|that|saying|asking|to|explaining|for|regarding)\s+(.*)$/i);
