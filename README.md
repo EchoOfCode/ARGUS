@@ -85,13 +85,13 @@
 * Speak directly into WhatsApp mic in your `ARGUS` group.
 * Voice notes are automatically transcribed via Groq Whisper (`whisper-large-v3`) and executed instantly.
 
-### 🤖 8. Auto-Pilot Digital Clone Persona
+### 🤖 7. Auto-Pilot Digital Clone Persona
 * **Autonomous 1-on-1 Auto-Responder:** Turn on auto-pilot for specific contacts or global busy periods (`autopilot on for Harshith` or `autopilot on: studying for exams`).
 * **Persona & Tone Matching:** Reads past conversation history and your Second Brain knowledge base to reply in your personal, authentic texting style.
 * **Transparent Activity Mirror:** Every auto-pilot response is mirrored back to your `ARGUS` command group in real-time.
 * **Realistic Typing Simulation:** Emulates real-world typing indicators (`composing`) with dynamic natural delays.
 
-### 🚫 9. Granular Chat Exemption
+### 🚫 8. Granular Chat Exemption
 * Stop ARGUS from logging spammy chats: `exempt [Group Name]` / `unexempt [Group Name]` / `exempted chats`.
 
 ---
@@ -123,9 +123,6 @@ Edit `backend/.env`:
 GROQ_API_KEY=gsk_your_actual_groq_api_key
 GROQ_MODEL=openai/gpt-oss-120b
 ARGUS_SECRET=5f3668d3b40f49f9fc3dc9d02b55b96bc797023b76a327b597900c04aa5ce2ac
-OWNER_NAME=YourName
-OWNER_BIO=Computer Science student at University XYZ
-OWNER_TONE=casual, friendly, concise, authentic WhatsApp texting style
 EMAIL_USER=your_email@gmail.com
 EMAIL_PASS=your_16_character_app_password
 ```

@@ -1081,15 +1081,15 @@ async function handleEnableAutopilot(sock: WASocket, chatJid: string, raw: strin
     const targetQuery = forMatch[1].trim();
     const customPrompt = forMatch[2] ? forMatch[2].trim() : undefined;
 
-    const chat = findChatByNameOrQuery(targetQuery);
+    let chat = findChatByNameOrQuery(targetQuery);
     if (!chat) {
-      await sendError(
-        sock,
-        chatJid,
-        `Could not find contact "${targetQuery}".\n_Type *contacts* to see your directory, or *save contact [Name] [Phone]*._`,
-        config
-      );
-      return;
+      const cleanPhone = targetQuery.replace(/[^0-9]/g, "");
+      if (cleanPhone.length >= 7) {
+        chat = { jid: `${cleanPhone}@s.whatsapp.net`, name: targetQuery };
+        saveChatDirectory(chat.jid, chat.name, false);
+      } else {
+        chat = { jid: targetQuery.toLowerCase(), name: targetQuery };
+      }
     }
 
     enableAutopilot(chat.jid, chat.name, customPrompt);

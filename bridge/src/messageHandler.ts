@@ -271,7 +271,7 @@ export async function handleMessage(
   // Explicit Command Keyword Check
   const isExplicitCommand =
     isCommandChat ||
-    /^\s*(help|\/help|email|emails|mail|mails|inbox|summarize|summ[ae]ri[zs]e|catchup|catch\s*up|recap|todos?|add\s+|remind\s+|briefing|agenda|remember\s+|recall\s+|what\s+is\s+my|where\s+is\s+my|search\s+|google\s+|web\s+|exempt|unexempt)\b/i.test(text);
+    /^\s*(help|\/help|email|emails|mail|mails|inbox|autopilot|summarize|summ[ae]ri[zs]e|catchup|catch\s*up|recap|todos?|add\s+|remind\s+|briefing|agenda|remember\s+|recall\s+|what\s+is\s+my|where\s+is\s+my|search\s+|google\s+|web\s+|exempt|unexempt)\b/i.test(text);
 
   // ─── Command Mode: Self-Chat OR Dedicated ARGUS Group OR Explicit Command ───
   if (isCommandChat || (isFromMe && isExplicitCommand)) {

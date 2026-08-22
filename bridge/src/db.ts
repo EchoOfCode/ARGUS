@@ -602,13 +602,33 @@ export function disableAllAutopilot(): boolean {
   return result.changes > 0;
 }
 
-export function getActiveAutopilotRule(jid: string): AutopilotRule | null {
-  // Check specific contact rule first, then fallback to GLOBAL rule
-  const specific = getDb()
-    .prepare("SELECT * FROM autopilot_rules WHERE jid = ? AND status = 'active'")
-    .get(jid) as AutopilotRule | undefined;
+export function getActiveAutopilotRule(rawJid: string): AutopilotRule | null {
+  if (!rawJid) return null;
+  const cleanPhone = rawJid.split(":")[0].replace(/@.*/, "").replace(/[^0-9]/g, "");
+
+  // 1. Direct match on full JID or phone number pattern
+  let specific = getDb()
+    .prepare(
+      `SELECT * FROM autopilot_rules 
+       WHERE (jid = ? OR jid LIKE ? OR (LENGTH(?) >= 7 AND jid LIKE ?)) 
+       AND status = 'active'`
+    )
+    .get(rawJid, `${cleanPhone}@%`, cleanPhone, `%${cleanPhone}%`) as AutopilotRule | undefined;
   if (specific) return specific;
 
+  // 2. Match against contact name
+  const contact = getDb()
+    .prepare("SELECT name FROM chat_directory WHERE jid LIKE ? OR jid = ?")
+    .get(`%${cleanPhone}%`, rawJid) as { name: string } | undefined;
+
+  if (contact && contact.name) {
+    specific = getDb()
+      .prepare("SELECT * FROM autopilot_rules WHERE LOWER(name) = LOWER(?) AND status = 'active'")
+      .get(contact.name) as AutopilotRule | undefined;
+    if (specific) return specific;
+  }
+
+  // 3. Fallback to GLOBAL rule
   const global = getDb()
     .prepare("SELECT * FROM autopilot_rules WHERE jid = 'GLOBAL' AND status = 'active'")
     .get() as AutopilotRule | undefined;
