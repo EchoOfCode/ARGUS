@@ -56,6 +56,16 @@ let cachedEmails: Array<{ id: string; subject: string; sender: string; date: str
  * Handles messages sent to self-chat (your own JID).
  * This is the command mode where you talk directly to ARGUS.
  */
+interface ConversationSession {
+  action: "awaiting_message_text" | "awaiting_message_target";
+  targetJid?: string;
+  targetName?: string;
+  draftText?: string;
+  expiresAt: number;
+}
+
+let activeSession: ConversationSession | null = null;
+
 export async function handleSelfChatMessage(
   sock: WASocket,
   text: string,
@@ -63,6 +73,62 @@ export async function handleSelfChatMessage(
   config: Config
 ): Promise<void> {
   const normalized = text.trim().toLowerCase();
+
+  // ─── Multi-Turn Context Session Continuity ───────────────────
+  if (activeSession && Date.now() < activeSession.expiresAt) {
+    if (activeSession.action === "awaiting_message_text" && activeSession.targetJid && activeSession.targetName) {
+      if (["cancel", "abort", "no", "stop", "n"].includes(normalized)) {
+        activeSession = null;
+        await sendText(sock, chatJid, "❌ *Cancelled.*", config);
+        return;
+      }
+
+      let content = text
+        .replace(/^(send|text|dm|msg|message)\s+/i, "")
+        .replace(/^["']|["']$/g, "")
+        .trim();
+
+      content = content.replace(new RegExp(`\\s+to\\s+${activeSession.targetName}$`, "i"), "").trim();
+
+      if (content) {
+        const targetJid = activeSession.targetJid;
+        const targetName = activeSession.targetName;
+        activeSession = null;
+
+        let finalDraft = content;
+        if (content.length > 25 || /\b(about|explain|explaining|ask|asking|inform|informing|apologize)\b/i.test(content)) {
+          try {
+            const askRes = await callBrain(config, "/ask", {
+              question: `Draft a concise, natural, polite WhatsApp message to "${targetName}" regarding: "${content}". Write ONLY the drafted message text itself with no disclaimers, quotes, or placeholders.`,
+            });
+            if (askRes && askRes.answer) {
+              finalDraft = askRes.answer.replace(/^["']|["']$/g, "").trim();
+            }
+          } catch {
+            finalDraft = content;
+          }
+        }
+
+        addPendingOutbox(targetJid, targetName, finalDraft);
+        await sendText(
+          sock,
+          chatJid,
+          [
+            `📝 *Draft for ${targetName}:*`,
+            `────────────────────────────`,
+            `"${finalDraft}"`,
+            `────────────────────────────`,
+            `Reply:`,
+            `  ✅ *yes* — Send now`,
+            `  ✏️ *edit [new text]* — Modify draft`,
+            `  ❌ *cancel* — Discard`,
+          ].join("\n"),
+          config
+        );
+        return;
+      }
+    }
+  }
 
   // ─── Check Pending Outbox Confirmation ("yes" / "edit" / "cancel") ───
   if (["yes", "send", "confirm", "y", "✅"].includes(normalized)) {
@@ -127,7 +193,10 @@ export async function handleSelfChatMessage(
   }
 
   // ─── Contacts & Address Book Commands ───────────────────────
-  if (["contacts", "list contacts", "show contacts", "directory", "chats", "my contacts", "my chats"].includes(normalized)) {
+  if (
+    ["contacts", "contact list", "contacts list", "list contacts", "show contacts", "directory", "chats", "my contacts", "my chats"].includes(normalized) ||
+    /\b(contacts?|directory)\s*(list)?$/i.test(normalized)
+  ) {
     await handleListContacts(sock, chatJid, config);
     return;
   }
@@ -835,31 +904,56 @@ async function handleOutgoingMessageCommand(
   let target = "";
   let rawContent = "";
 
-  // Strip leading polite prefixes ("can you send message to", "please tell", "tell", "send to", etc.)
-  const cleanCmd = text.replace(
-    /^(can\s+u|can\s+you|please|could\s+you)?\s*(draft\s+(a\s+)?message\s+to|draft\s+to|send\s+(a\s+)?message\s+to|send\s+to|tell|message|text|dm)\s+/i,
-    ""
-  ).trim();
-
-  // If there's a colon e.g. "Harshith: let's meet at 7"
-  const colonIdx = cleanCmd.indexOf(":");
-  if (colonIdx > 0 && colonIdx < 30) {
-    target = cleanCmd.substring(0, colonIdx).trim();
-    rawContent = cleanCmd.substring(colonIdx + 1).trim();
+  // 1. Pattern: "send [message] to [target]" (e.g. `send "hello can u text me" to Harshith` or `send hello to Harshith`)
+  const sendMsgToTargetMatch = text.match(/^(?:can\s+u\s+|please\s+)?(?:send|text|dm|msg|message)\s+(?:["']([^"']+)["']|(.+?))\s+to\s+([a-zA-Z0-9_\-\.\s]+)$/i);
+  if (sendMsgToTargetMatch) {
+    rawContent = (sendMsgToTargetMatch[1] || sendMsgToTargetMatch[2]).trim();
+    target = sendMsgToTargetMatch[3].trim();
   } else {
-    // Look for split words: "about", "that", "saying", "asking", "to"
-    const splitMatch = cleanCmd.match(/^([a-zA-Z0-9_\-\.\s]{1,25}?)\s+(about|that|saying|asking|to|explaining|for|regarding)\s+(.*)$/i);
-    if (splitMatch) {
-      target = splitMatch[1].trim();
-      rawContent = splitMatch[3].trim();
+    // 2. Strip leading polite prefixes ("can you send message to", "please tell", "tell", "send to", etc.)
+    const cleanCmd = text.replace(
+      /^(can\s+u|can\s+you|please|could\s+you|i\s+wanna|i\s+want\s+to|i\s+need\s+to)?\s*(draft\s+(a\s+)?message\s+to|draft\s+to|send\s+(a\s+)?message\s+to|send\s+to|tell|message|text|dm)\s+/i,
+      ""
+    ).trim();
+
+    // If user only typed contact name e.g. "I wanna text Harshith" or "text Harshith"
+    const singleContact = findChatByNameOrQuery(cleanCmd);
+    if (singleContact && !cleanCmd.includes(":") && cleanCmd.split(" ").length <= 2) {
+      activeSession = {
+        action: "awaiting_message_text",
+        targetJid: singleContact.jid,
+        targetName: singleContact.name,
+        expiresAt: Date.now() + 300000,
+      };
+      await sendText(
+        sock,
+        chatJid,
+        `📝 What message would you like to send to *${singleContact.name}*?\n_(Just text your message here directly)_`,
+        config
+      );
+      return;
+    }
+
+    // If there's a colon e.g. "Harshith: let's meet at 7"
+    const colonIdx = cleanCmd.indexOf(":");
+    if (colonIdx > 0 && colonIdx < 30) {
+      target = cleanCmd.substring(0, colonIdx).trim();
+      rawContent = cleanCmd.substring(colonIdx + 1).trim();
     } else {
-      const words = cleanCmd.split(" ");
-      target = words[0];
-      rawContent = words.slice(1).join(" ");
+      // Look for split words: "about", "that", "saying", "asking", "to"
+      const splitMatch = cleanCmd.match(/^([a-zA-Z0-9_\-\.\s]{1,25}?)\s+(about|that|saying|asking|to|explaining|for|regarding)\s+(.*)$/i);
+      if (splitMatch) {
+        target = splitMatch[1].trim();
+        rawContent = splitMatch[3].trim();
+      } else {
+        const words = cleanCmd.split(" ");
+        target = words[0];
+        rawContent = words.slice(1).join(" ");
+      }
     }
   }
 
-  if (!target || !rawContent) {
+  if (!target && !rawContent) {
     await sendError(
       sock,
       chatJid,
@@ -867,6 +961,26 @@ async function handleOutgoingMessageCommand(
       config
     );
     return;
+  }
+
+  // If user only gave a target contact (e.g. "Harshith" with no content)
+  if (target && !rawContent) {
+    const foundTarget = findChatByNameOrQuery(target);
+    if (foundTarget) {
+      activeSession = {
+        action: "awaiting_message_text",
+        targetJid: foundTarget.jid,
+        targetName: foundTarget.name,
+        expiresAt: Date.now() + 300000,
+      };
+      await sendText(
+        sock,
+        chatJid,
+        `📝 What message would you like to send to *${foundTarget.name}*?\n_(Just text your message here directly)_`,
+        config
+      );
+      return;
+    }
   }
 
   const found = findChatByNameOrQuery(target);

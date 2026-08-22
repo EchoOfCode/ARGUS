@@ -194,7 +194,7 @@ async def parse_reminder_endpoint(
 
     try:
         parsed = parse_reminder(
-            text=request.message_text,
+            message_text=request.message_text,
             reference_timestamp=request.reference_timestamp,
         )
         return ReminderResponse(**parsed)

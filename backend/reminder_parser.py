@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from typing import Optional
 
 from groq import Groq
 
@@ -31,12 +32,19 @@ RULES:
 """
 
 
-def parse_reminder(message_text: str, reference_timestamp: str) -> dict:
+def parse_reminder(
+    message_text: Optional[str] = None,
+    reference_timestamp: Optional[str] = None,
+    text: Optional[str] = None,
+) -> dict:
     """
     Parse a natural language reminder using Groq.
 
     Returns: { reminder_text, due_at, confidence }
     """
+    actual_text = message_text or text or ""
+    if not actual_text:
+        raise ValueError("No message text provided for reminder parsing")
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError("GROQ_API_KEY not set")
