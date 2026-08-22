@@ -57,7 +57,9 @@ let cachedEmails: Array<{ id: string; subject: string; sender: string; date: str
  * This is the command mode where you talk directly to ARGUS.
  */
 interface ConversationSession {
-  action: "awaiting_message_text" | "awaiting_message_target";
+  action:
+    | "awaiting_message_text"      // user said "text Harshith" → waiting for the message body
+    | "awaiting_draft_details";    // user said "frame a message" → waiting for recipient/purpose/tone
   targetJid?: string;
   targetName?: string;
   draftText?: string;
@@ -65,6 +67,14 @@ interface ConversationSession {
 }
 
 let activeSession: ConversationSession | null = null;
+
+// In-memory store for the last AI-generated draft (covers Q&A-generated drafts too)
+let lastGeneratedDraft: {
+  text: string;
+  targetName?: string;
+  targetJid?: string;
+  createdAt: number;
+} | null = null;
 
 export async function handleSelfChatMessage(
   sock: WASocket,
@@ -76,6 +86,8 @@ export async function handleSelfChatMessage(
 
   // ─── Multi-Turn Context Session Continuity ───────────────────
   if (activeSession && Date.now() < activeSession.expiresAt) {
+
+    // --- State: Waiting for the message body (user already picked a target) ---
     if (activeSession.action === "awaiting_message_text" && activeSession.targetJid && activeSession.targetName) {
       if (["cancel", "abort", "no", "stop", "n"].includes(normalized)) {
         activeSession = null;
@@ -96,7 +108,7 @@ export async function handleSelfChatMessage(
         activeSession = null;
 
         let finalDraft = content;
-        if (content.length > 25 || /\b(about|explain|explaining|ask|asking|inform|informing|apologize)\b/i.test(content)) {
+        if (content.length > 25 || /\b(about|explain|explaining|ask|asking|inform|informing|apologize|regarding|meeting|cubbon|park)\b/i.test(content)) {
           try {
             const askRes = await callBrain(config, "/ask", {
               question: `Draft a concise, natural, polite WhatsApp message to "${targetName}" regarding: "${content}". Write ONLY the drafted message text itself with no disclaimers, quotes, or placeholders.`,
@@ -110,6 +122,7 @@ export async function handleSelfChatMessage(
         }
 
         addPendingOutbox(targetJid, targetName, finalDraft);
+        lastGeneratedDraft = { text: finalDraft, targetName, targetJid, createdAt: Date.now() };
         await sendText(
           sock,
           chatJid,
@@ -119,7 +132,7 @@ export async function handleSelfChatMessage(
             `"${finalDraft}"`,
             `────────────────────────────`,
             `Reply:`,
-            `  ✅ *yes* — Send now`,
+            `  ✅ *yes* or *send it* — Send now`,
             `  ✏️ *edit [new text]* — Modify draft`,
             `  ❌ *cancel* — Discard`,
           ].join("\n"),
@@ -128,17 +141,165 @@ export async function handleSelfChatMessage(
         return;
       }
     }
+
+    // --- State: Waiting for recipient + purpose + tone ("frame a message" flow) ---
+    if (activeSession.action === "awaiting_draft_details") {
+      if (["cancel", "abort", "no", "stop", "n"].includes(normalized)) {
+        activeSession = null;
+        await sendText(sock, chatJid, "❌ *Cancelled.*", config);
+        return;
+      }
+
+      // Parse the multi-line or single-line details.
+      // User might say: "harshith\npurpose is to meet tmr at cubbon park\ntone is Humour"
+      // Or: "harshith about meeting at cubbon park tomorrow, humorous tone"
+      const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+
+      let recipientStr = "";
+      let purposeStr = "";
+      let toneStr = "";
+
+      if (lines.length >= 2) {
+        // Multi-line format
+        recipientStr = lines[0].replace(/^(recipient|to|contact|name)[:\s]*/i, "").trim();
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i];
+          if (/^(purpose|about|regarding|message|topic)[:\s]+/i.test(line)) {
+            purposeStr = line.replace(/^(purpose|about|regarding|message|topic)[:\s]+/i, "").trim();
+          } else if (/^(tone|style|vibe)[:\s]+/i.test(line)) {
+            toneStr = line.replace(/^(tone|style|vibe)[:\s]+/i, "").trim();
+          } else if (!purposeStr) {
+            purposeStr = line;
+          } else if (!toneStr) {
+            toneStr = line;
+          }
+        }
+      } else {
+        // Single-line: try to parse "harshith about meeting at cubbon park"
+        const singleLine = text.trim();
+        const aboutMatch = singleLine.match(/^(.+?)\s+(about|regarding|for|that)\s+(.+)$/i);
+        if (aboutMatch) {
+          recipientStr = aboutMatch[1].trim();
+          purposeStr = aboutMatch[3].trim();
+        } else {
+          recipientStr = singleLine;
+        }
+      }
+
+      if (!recipientStr) {
+        await sendText(sock, chatJid, "Who should I send this to? Give me a name or group.", config);
+        return;
+      }
+
+      const foundRecipient = findChatByNameOrQuery(recipientStr);
+      if (!foundRecipient) {
+        await sendText(
+          sock,
+          chatJid,
+          `🔍 Could not find *${recipientStr}* in your contacts.\n\nTry a different name or type *cancel* to abort.`,
+          config
+        );
+        return;
+      }
+
+      // If we don't have a purpose yet, ask for it
+      if (!purposeStr) {
+        activeSession = {
+          action: "awaiting_message_text",
+          targetJid: foundRecipient.jid,
+          targetName: foundRecipient.name,
+          expiresAt: Date.now() + 300000,
+        };
+        await sendText(
+          sock,
+          chatJid,
+          `📝 What message would you like to send to *${foundRecipient.name}*?\n_(Just type the message or describe what it should be about)_`,
+          config
+        );
+        return;
+      }
+
+      // We have recipient + purpose → generate the draft
+      activeSession = null;
+      const draftPrompt = toneStr
+        ? `Draft a concise, natural WhatsApp message to "${foundRecipient.name}" regarding: "${purposeStr}". Use a ${toneStr} tone. Write ONLY the message text itself with no disclaimers, quotes, labels, or placeholders.`
+        : `Draft a concise, natural, polite WhatsApp message to "${foundRecipient.name}" regarding: "${purposeStr}". Write ONLY the message text itself with no disclaimers, quotes, labels, or placeholders.`;
+
+      let finalDraft = purposeStr;
+      try {
+        const askRes = await callBrain(config, "/ask", { question: draftPrompt });
+        if (askRes && askRes.answer) {
+          finalDraft = askRes.answer.replace(/^["']|["']$/g, "").trim();
+        }
+      } catch {
+        // fallback
+      }
+
+      addPendingOutbox(foundRecipient.jid, foundRecipient.name, finalDraft);
+      lastGeneratedDraft = { text: finalDraft, targetName: foundRecipient.name, targetJid: foundRecipient.jid, createdAt: Date.now() };
+      await sendText(
+        sock,
+        chatJid,
+        [
+          `📝 *Draft for ${foundRecipient.name}:*`,
+          `────────────────────────────`,
+          `"${finalDraft}"`,
+          `────────────────────────────`,
+          `Reply:`,
+          `  ✅ *yes* or *send it* — Send now`,
+          `  ✏️ *edit [new text]* — Modify draft`,
+          `  ❌ *cancel* — Discard`,
+        ].join("\n"),
+        config
+      );
+      return;
+    }
+  }
+
+  // ─── "send it" / "send it to [contact]" — Dispatch Pending Outbox ───
+  const sendItToMatch = normalized.match(
+    /^(?:send|forward|dispatch)\s+(?:it|this|that|the\s+message|the\s+draft)\s+(?:to\s+)?(.+)$/i
+  );
+  if (sendItToMatch) {
+    const pendingOutbox = getLatestPendingOutbox();
+    const draftToUse = pendingOutbox
+      ? pendingOutbox.message_text
+      : lastGeneratedDraft && Date.now() - lastGeneratedDraft.createdAt < 300000
+        ? lastGeneratedDraft.text
+        : null;
+
+    if (draftToUse) {
+      const recipientName = sendItToMatch[1].trim();
+      const found = findChatByNameOrQuery(recipientName);
+      if (found) {
+        await sock.sendMessage(found.jid, { text: draftToUse });
+        if (pendingOutbox) markOutboxSent(pendingOutbox.id);
+        lastGeneratedDraft = null;
+        await sendText(sock, chatJid, `✅ *Message sent to ${found.name}!*`, config);
+        return;
+      } else {
+        await sendText(
+          sock,
+          chatJid,
+          `🔍 Could not find *${recipientName}* in your contacts.`,
+          config
+        );
+        return;
+      }
+    }
+    // no draft available — fall through
   }
 
   // ─── Check Pending Outbox Confirmation ("yes" / "send" / "send it" / "confirm") ───
   if (
     ["yes", "send", "send it", "send now", "confirm", "y", "✅", "do it", "shoot", "ok send it", "please send", "yes send it", "go ahead"].includes(normalized) ||
-    /^(yes|send|confirm|send\s+it|send\s+now|do\s+it|please\s+send)\b/i.test(normalized)
+    /^(yes|send\s*it|send\s*now|do\s+it|please\s+send)\s*$/i.test(normalized)
   ) {
     const pendingOutbox = getLatestPendingOutbox();
     if (pendingOutbox) {
       await sock.sendMessage(pendingOutbox.target_jid, { text: pendingOutbox.message_text });
       markOutboxSent(pendingOutbox.id);
+      lastGeneratedDraft = null;
       await sendText(
         sock,
         chatJid,
@@ -179,6 +340,7 @@ export async function handleSelfChatMessage(
     const pendingOutbox = getLatestPendingOutbox();
     if (pendingOutbox) {
       cancelPendingOutbox(pendingOutbox.id);
+      lastGeneratedDraft = null;
       await sendText(
         sock,
         chatJid,
@@ -903,22 +1065,42 @@ async function handleOutgoingMessageCommand(
   chatJid: string,
   config: Config
 ): Promise<boolean> {
-  const isExplicitDraft = /^(can\s+u|can\s+you|please|could\s+you)?\s*(frame|compose|write|create|prepare|draft|send|tell|message|text|dm)\s+/i.test(text);
+  const normalized = text.trim().toLowerCase();
+
+  // Block "send it/this/that to X" — these are handled by the sendItToMatch interceptor above
+  if (/^(?:send|forward|dispatch)\s+(?:it|this|that|the\s+message|the\s+draft)\s+/i.test(normalized)) {
+    return false; // let the interceptor handle it
+  }
 
   let target = "";
   let rawContent = "";
 
-  // 1. Pattern: "send [message] to [target]" (e.g. `send "hello can u text me" to Harshith` or `send hello to Harshith`)
+  // 1. Pattern: "send [message] to [target]" (e.g. `send "hello" to Harshith`)
   const sendMsgToTargetMatch = text.match(/^(?:can\s+u\s+|please\s+)?(?:send|text|dm|msg|message)\s+(?:["']([^"']+)["']|(.+?))\s+to\s+([a-zA-Z0-9_\-\.\s]+)$/i);
   if (sendMsgToTargetMatch) {
     rawContent = (sendMsgToTargetMatch[1] || sendMsgToTargetMatch[2]).trim();
     target = sendMsgToTargetMatch[3].trim();
   } else {
-    // 2. Strip leading polite prefixes ("frame a message to", "compose a message to", "tell", "send to", etc.)
+    // 2. Strip leading polite prefixes
     const cleanCmd = text.replace(
       /^(can\s+u|can\s+you|please|could\s+you|i\s+wanna|i\s+want\s+to|i\s+need\s+to)?\s*(frame|compose|write|create|prepare|draft|send|tell|message|text|dm)\s+(a\s+)?(message\s+to\s+|msg\s+to\s+|text\s+to\s+|to\s+|message\s+|msg\s+|text\s+|)/i,
       ""
     ).trim();
+
+    // If cleanCmd is empty or just a filler word → enter multi-turn draft session
+    if (!cleanCmd || /^(message|msg|text|it|a|the)$/i.test(cleanCmd)) {
+      activeSession = {
+        action: "awaiting_draft_details",
+        expiresAt: Date.now() + 300000,
+      };
+      await sendText(
+        sock,
+        chatJid,
+        `📝 *Draft Mode*\n\nWho's the recipient, what's the purpose, and what tone?\n\n_Example:_\nHarshith\npurpose is to meet tmr at cubbon park\ntone is humour\n\n_Or type *cancel* to abort._`,
+        config
+      );
+      return true;
+    }
 
     // If user only typed contact name e.g. "I wanna text Harshith" or "text Harshith"
     const singleContact = findChatByNameOrQuery(cleanCmd);
@@ -938,13 +1120,13 @@ async function handleOutgoingMessageCommand(
       return true;
     }
 
-    // If there's a colon or hyphen e.g. "Harshith: let's meet at 7" or "Harshith - how are you"
+    // If there's a colon or hyphen e.g. "Harshith: let's meet at 7"
     const colonOrDashMatch = cleanCmd.match(/^([a-zA-Z0-9_\.\s]{1,30}?)\s*[:\-–—]\s*(.+)$/);
     if (colonOrDashMatch) {
       target = colonOrDashMatch[1].trim();
       rawContent = colonOrDashMatch[2].trim();
     } else {
-      // Look for split words: "regarding", "about", "that", "saying", "asking", "to", "for"
+      // Look for split words: "regarding", "about", "that", etc.
       const splitMatch = cleanCmd.match(/^([a-zA-Z0-9_\-\.\s]{1,35}?)\s+(regarding|about|that|saying|asking|to|explaining|for)\s+(.*)$/i);
       if (splitMatch) {
         target = splitMatch[1].trim();
@@ -958,15 +1140,6 @@ async function handleOutgoingMessageCommand(
   }
 
   if (!target && !rawContent) {
-    if (isExplicitDraft) {
-      await sendError(
-        sock,
-        chatJid,
-        "Example: *tell noclue I'll be 10 minutes late* or *can u send message to Harshith about moving meeting to 7*",
-        config
-      );
-      return true;
-    }
     return false;
   }
 
@@ -993,21 +1166,19 @@ async function handleOutgoingMessageCommand(
 
   const found = findChatByNameOrQuery(target);
   if (!found) {
-    if (isExplicitDraft) {
-      await sendText(
-        sock,
-        chatJid,
-        `🔍 Could not find *${target}* in your WhatsApp contacts directory.\n\n_To add them, type:_ \`save contact ${target} [phone number]\`\n_Example:_ \`save contact ${target} 919876543210\``,
-        config
-      );
-      return true;
-    }
-    return false;
+    await sendText(
+      sock,
+      chatJid,
+      `🔍 Could not find *${target}* in your WhatsApp contacts directory.\n\n_To add them, type:_ \`save contact ${target} [phone number]\`\n_Example:_ \`save contact ${target} 919876543210\``,
+      config
+    );
+    return true;
   }
 
   let finalDraft = rawContent;
 
-  if (isExplicitDraft || rawContent.length > 25 || /\b(about|explain|explaining|ask|asking|inform|informing|apologize|apologizing|tell them|moving|rescheduling)\b/i.test(rawContent)) {
+  // Always AI-draft for explicit framing commands, or if the content is descriptive
+  if (rawContent.length > 25 || /\b(about|explain|explaining|ask|asking|inform|informing|apologize|apologizing|tell them|moving|rescheduling|meeting|regarding|cubbon|park)\b/i.test(rawContent)) {
     try {
       const askRes = await callBrain(config, "/ask", {
         question: `Draft a concise, natural, polite WhatsApp message to "${found.name}" regarding: "${rawContent}". Write ONLY the drafted message text itself with no disclaimers, quotes, or placeholders.`,
@@ -1021,6 +1192,7 @@ async function handleOutgoingMessageCommand(
   }
 
   addPendingOutbox(found.jid, found.name, finalDraft);
+  lastGeneratedDraft = { text: finalDraft, targetName: found.name, targetJid: found.jid, createdAt: Date.now() };
 
   await sendText(
     sock,
@@ -1031,7 +1203,7 @@ async function handleOutgoingMessageCommand(
       `"${finalDraft}"`,
       `────────────────────────────`,
       `Reply:`,
-      `  ✅ *yes* — Send to ${found.name}`,
+      `  ✅ *yes* or *send it* — Send to ${found.name}`,
       `  ✏️ *edit [new text]* — Modify draft`,
       `  ❌ *cancel* — Discard`,
     ].join("\n"),
