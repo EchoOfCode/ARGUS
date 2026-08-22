@@ -70,8 +70,7 @@ android/.idea/
 *.jks
 
 # ─── Remotion Video Renders & Caches ───────────────────────────────
-remotion/out/
-remotion/.cache/
+remotion/
 *.mp4
 *.webm
 *.mov
