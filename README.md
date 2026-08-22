@@ -4,6 +4,7 @@
 ### **Autonomous Real-time General Utility System**
 *Your Personal AI Executive Assistant, Second Brain & Communication Hub on WhatsApp.*
 
+[![Website](https://img.shields.io/badge/Website-get--argus.vercel.app-000000.svg?logo=vercel&logoColor=white)](https://get-argus.vercel.app)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -11,7 +12,7 @@
 [![Groq](https://img.shields.io/badge/AI%20Inference-Groq%20Cloud-F55036.svg)](https://groq.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](https://docker.com)
 
-[Features](#-key-features) • [Quickstart](#-quickstart-guide) • [Docker Deployment](#-docker-deployment) • [Command Cheatsheet](#-command-cheatsheet) • [Architecture](#-architecture)
+[🌐 **Live Website**](https://get-argus.vercel.app) • [Features](#-key-features) • [Quickstart](#-quickstart-guide) • [Docker Deployment](#-docker-deployment) • [Command Cheatsheet](#-command-cheatsheet) • [Architecture](#-architecture)
 
 <br/>
 
@@ -25,6 +26,8 @@
 ---
 
 ## 🌟 Overview
+
+> 🌐 **Interactive Web Showcase:** Experience the live architecture, command playground, and deployment visualizer at **[get-argus.vercel.app](https://get-argus.vercel.app)**.
 
 **ARGUS** is a privacy-first, locally hosted AI executive assistant directly integrated into **WhatsApp**. Designed to function as your personal **Second Brain** and digital Chief of Staff, ARGUS actively ingests chatter across all your WhatsApp groups, prioritizes your inbox, schedules calendar events, and drafts polished messages—all controllable via natural conversational WhatsApp messages and voice notes.
 
