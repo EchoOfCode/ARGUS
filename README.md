@@ -15,7 +15,10 @@
 
 <br/>
 
-<img src="assets/argus_demo.gif" alt="ARGUS Apple Keynote Demo" width="100%" style="border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.8);" />
+<picture>
+  <source srcset="assets/argus_demo.webp" type="image/webp">
+  <img src="assets/argus_demo.gif" alt="ARGUS Apple Keynote Showcase" width="100%" style="border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.1); border: 1px solid #e2e8f0;" />
+</picture>
 
 </div>
 
