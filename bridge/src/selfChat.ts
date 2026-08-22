@@ -130,8 +130,11 @@ export async function handleSelfChatMessage(
     }
   }
 
-  // ─── Check Pending Outbox Confirmation ("yes" / "edit" / "cancel") ───
-  if (["yes", "send", "confirm", "y", "✅"].includes(normalized)) {
+  // ─── Check Pending Outbox Confirmation ("yes" / "send" / "send it" / "confirm") ───
+  if (
+    ["yes", "send", "send it", "send now", "confirm", "y", "✅", "do it", "shoot", "ok send it", "please send", "yes send it", "go ahead"].includes(normalized) ||
+    /^(yes|send|confirm|send\s+it|send\s+now|do\s+it|please\s+send)\b/i.test(normalized)
+  ) {
     const pendingOutbox = getLatestPendingOutbox();
     if (pendingOutbox) {
       await sock.sendMessage(pendingOutbox.target_jid, { text: pendingOutbox.message_text });
@@ -387,10 +390,10 @@ export async function handleSelfChatMessage(
     return;
   }
 
-  // ─── Outbound Message Commands ("can u send message to...", "tell [group] [msg]") ───
+  // ─── Outbound Message Commands ("frame a message to...", "can u send message to...", "tell [group] [msg]") ───
   if (
     !/^tell\s+(me|us|a\s+|about\s+|why\s+|how\s+|what\s+|where\s+|who\s+|when\s+)/i.test(normalized) &&
-    /^(can\s+u|can\s+you|please|could\s+you|i\s+wanna|i\s+want\s+to|i\s+need\s+to)?\s*(send\s+(a\s+)?message\s+to|send\s+to|tell|message|text|dm|draft\s+(a\s+)?message\s+to|draft\s+to)\s+/i.test(normalized)
+    /^(can\s+u|can\s+you|please|could\s+you|i\s+wanna|i\s+want\s+to|i\s+need\s+to)?\s*(frame|compose|write|create|prepare|draft|send|tell|message|text|dm)\s+/i.test(normalized)
   ) {
     const handled = await handleOutgoingMessageCommand(sock, text, chatJid, config);
     if (handled) return;
@@ -900,7 +903,7 @@ async function handleOutgoingMessageCommand(
   chatJid: string,
   config: Config
 ): Promise<boolean> {
-  const isExplicitDraft = /^(can\s+u|can\s+you|please|could\s+you)?\s*(draft\s+(a\s+)?message\s+to|draft\s+to|send\s+(a\s+)?message\s+to|send\s+to)\s+/i.test(text);
+  const isExplicitDraft = /^(can\s+u|can\s+you|please|could\s+you)?\s*(frame|compose|write|create|prepare|draft|send|tell|message|text|dm)\s+/i.test(text);
 
   let target = "";
   let rawContent = "";
@@ -911,9 +914,9 @@ async function handleOutgoingMessageCommand(
     rawContent = (sendMsgToTargetMatch[1] || sendMsgToTargetMatch[2]).trim();
     target = sendMsgToTargetMatch[3].trim();
   } else {
-    // 2. Strip leading polite prefixes ("can you send message to", "please tell", "tell", "send to", etc.)
+    // 2. Strip leading polite prefixes ("frame a message to", "compose a message to", "tell", "send to", etc.)
     const cleanCmd = text.replace(
-      /^(can\s+u|can\s+you|please|could\s+you|i\s+wanna|i\s+want\s+to|i\s+need\s+to)?\s*(draft\s+(a\s+)?message\s+to|draft\s+to|send\s+(a\s+)?message\s+to|send\s+to|tell|message|text|dm)\s+/i,
+      /^(can\s+u|can\s+you|please|could\s+you|i\s+wanna|i\s+want\s+to|i\s+need\s+to)?\s*(frame|compose|write|create|prepare|draft|send|tell|message|text|dm)\s+(a\s+)?(message\s+to\s+|msg\s+to\s+|text\s+to\s+|to\s+|message\s+|msg\s+|text\s+|)/i,
       ""
     ).trim();
 
@@ -941,8 +944,8 @@ async function handleOutgoingMessageCommand(
       target = colonOrDashMatch[1].trim();
       rawContent = colonOrDashMatch[2].trim();
     } else {
-      // Look for split words: "about", "that", "saying", "asking", "to"
-      const splitMatch = cleanCmd.match(/^([a-zA-Z0-9_\-\.\s]{1,25}?)\s+(about|that|saying|asking|to|explaining|for|regarding)\s+(.*)$/i);
+      // Look for split words: "regarding", "about", "that", "saying", "asking", "to", "for"
+      const splitMatch = cleanCmd.match(/^([a-zA-Z0-9_\-\.\s]{1,35}?)\s+(regarding|about|that|saying|asking|to|explaining|for)\s+(.*)$/i);
       if (splitMatch) {
         target = splitMatch[1].trim();
         rawContent = splitMatch[3].trim();
