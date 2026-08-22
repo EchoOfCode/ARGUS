@@ -179,7 +179,8 @@ class MemorySaveRequest(BaseModel):
     """Request to save a memory fact."""
 
     fact: str
-    category: str = "general"
+    category: Optional[str] = None
+    entities: Optional[List[str]] = None
 
 
 class MemorySaveResponse(BaseModel):
@@ -188,6 +189,7 @@ class MemorySaveResponse(BaseModel):
     id: int
     fact: str
     category: str
+    entities: List[str] = []
     message: str
 
 
@@ -195,7 +197,7 @@ class MemoryRecallRequest(BaseModel):
     """Request to search memory."""
 
     query: str
-    limit: int = 5
+    limit: int = 8
 
 
 class MemoryRecallResponse(BaseModel):
@@ -203,6 +205,27 @@ class MemoryRecallResponse(BaseModel):
 
     memories: List[Dict[str, Any]]
     answer: Optional[str] = None
+
+
+class MemoryListResponse(BaseModel):
+    """Response for full categorized memory list."""
+
+    categories: Dict[str, List[Dict[str, Any]]]
+    total_count: int
+
+
+class MemoryDeleteRequest(BaseModel):
+    """Request to delete memories."""
+
+    id: Optional[int] = None
+    query: Optional[str] = None
+
+
+class MemoryDeleteResponse(BaseModel):
+    """Response for memory deletion."""
+
+    deleted_count: int
+    message: str
 
 
 # ─── Web Search ─────────────────────────────────────────────────

@@ -1,9 +1,8 @@
-"""Groq API client for all ARGUS AI capabilities with rate limiting and retry protection."""
-
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 from groq import Groq
 from models import ExtractResponse
@@ -42,25 +41,42 @@ RULES:
 """
 
 SUMMARIZE_PROMPT = """\
-You are a concise conversation summarizer. Given a list of messages from a WhatsApp chat, \
-provide a clear and helpful summary.
+You are an executive conversation summarizer for ARGUS. Given a list of messages from a WhatsApp chat/group, provide a high-yield, beautifully formatted summary.
+
+STRUCTURE:
+📌 *Key Discussions & Announcements:*
+• (1-3 bullets on what was discussed or decided, attributing names where useful)
+
+🔗 *Links, Resources & Questions:*
+• (Any shared links, files, or important questions asked)
+
+⚡ *Action Items & Deadlines:*
+• (Any commitments, tasks, exam dates, or deadlines mentioned; if none, omit this section)
 
 RULES:
-1. Be concise — aim for 2-5 bullet points.
-2. Highlight key decisions, plans, action items, questions, and important links/info.
-3. Use the sender names to attribute key points.
-4. If the user gives specific instructions (like "what did we decide?"), focus on that.
-5. Return plain text — no JSON, no markdown fences.
+1. Be concise, sharp, and easy to skim on mobile.
+2. Return clean plain text formatted for WhatsApp without markdown code fences.
 """
 
 QA_PROMPT = """\
-You are ARGUS, a high-intelligence, polite, and concise personal AI assistant residing in WhatsApp.
+You are ARGUS (Autonomous Real-time General Utility System), the user's dedicated personal AI executive assistant and Second Brain, running directly on their local machine.
+
+IDENTITY & ORIGIN:
+• Creator: You were designed, engineered, and built by Yusuf.
+• Born / Created: February 2026 (PES University, Bangalore).
+• Mission: To be Yusuf's all-in-one cognitive operating system — seamlessly orchestrating WhatsApp communications, inbox triage, task management, calendar scheduling, web intelligence, and long-term memory.
+• Personality: Sharp, loyal, ultra-efficient, highly organized, and proactive with a polished executive demeanor.
+
+CAPABILITIES:
+• Direct local integration with WhatsApp (Baileys bridge), IMAP Gmail inbox, SQLite knowledge memory graph, Google Calendar sync, and real-time DuckDuckGo web search.
 
 RULES:
-1. Keep answers direct and concise — 1-3 sentences for simple questions.
-2. For complex questions or lists, use clear bullet points with relevant emojis.
-3. If web search results or personal memory context are provided, use them accurately.
-4. Return plain text suitable for WhatsApp — no markdown fences, no raw JSON.
+1. When asked who you are, who made you, or when you were born, state proudly and clearly that you are ARGUS, engineered by Yusuf in February 2026 as his personal AI executive assistant and Second Brain.
+2. NEVER claim you cannot access WhatsApp, group chats, or emails. You ARE ARGUS and you HAVE direct access to their local data.
+3. If the user asks to summarize a chat or group, tell them: "I can summarize any group or chat! Type 'catchup [group name]' or 'summarize group'."
+4. If the user asks for emails, tell them: "Type 'emails' to view your unread inbox, or 'summarize email #1' for a breakdown."
+5. Keep answers direct, friendly, and concise (1-3 sentences for simple questions).
+6. Return clean plain text formatted cleanly for WhatsApp without code blocks.
 """
 
 EMAIL_SUMMARY_PROMPT = """\
@@ -298,3 +314,94 @@ def generate_briefing(
     )
 
     return (completion.choices[0].message.content or "No briefing generated.").strip()
+
+
+# ─── Second Brain: Auto-Tagging & Synthesis ─────────────────────
+
+MEMORY_TAGGER_PROMPT = """\
+You are an intelligent knowledge base classifier for ARGUS Second Brain.
+Given a user fact or note, classify its category and extract 2-5 entity keywords.
+
+CATEGORIES:
+- academics (SRN, roll number, college, courses, exams, assignments, timetable)
+- credentials (WiFi passwords, server IPs, locker codes, account IDs, license keys)
+- people (friends, family, colleagues, birthdays, contact info, relationship notes)
+- personal (preferences, health, allergy, shoe size, coffee, habits, routines)
+- projects (work projects, code architecture, hackathons, repositories)
+- general (miscellaneous notes, thoughts, ideas)
+
+RULES:
+1. Return ONLY valid JSON:
+   {
+     "category": "academics|credentials|people|personal|projects|general",
+     "entities": ["keyword1", "keyword2"]
+   }
+2. No explanation or code blocks.
+"""
+
+MEMORY_SYNTHESIS_PROMPT = """\
+You are ARGUS, the user's personal Second Brain.
+Answer the user's question directly using ONLY their stored personal memories.
+
+RULES:
+1. Be direct, natural, and concise. Bold the exact facts/answers (e.g. "**PES1UG25CS001**", "**Harshith**").
+2. If multiple facts are relevant, combine them smoothly.
+3. If the stored memories do not contain the answer, say politely: "I don't have that stored in my memory yet. Tell me 'remember [fact]' and I'll keep track of it!"
+4. Return clean plain text formatted for WhatsApp without markdown code fences.
+"""
+
+
+@rate_limited()
+def classify_and_tag_memory(fact: str) -> Tuple[str, List[str]]:
+    """Classify category and extract entity keywords for a memory fact."""
+    client = _get_client()
+    try:
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": MEMORY_TAGGER_PROMPT},
+                {"role": "user", "content": f"Fact: {fact}"},
+            ],
+            model=_get_model(),
+            max_tokens=150,
+            temperature=0.1,
+        )
+        raw = completion.choices[0].message.content or "{}"
+        cleaned = raw.strip()
+        cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        data = json.loads(cleaned.strip())
+        cat = data.get("category", "general").lower()
+        if cat not in {"academics", "credentials", "people", "personal", "projects", "general"}:
+            cat = "general"
+        entities = data.get("entities", [])
+        return cat, entities
+    except Exception as e:
+        logger.warning("Memory tagging fallback: %s", e)
+        return "general", []
+
+
+@rate_limited()
+def synthesize_memory_answer(question: str, memories: List[Dict[str, Any]]) -> str:
+    """Synthesize a direct, natural answer using stored memory facts."""
+    if not memories:
+        return "I don't have that stored in my memory yet. Tell me *remember [fact]* and I'll keep track of it!"
+
+    client = _get_client()
+    memories_text = "\n".join([f"- [{m.get('category', 'general')}]: {m.get('fact_text')}" for m in memories])
+
+    user_prompt = f"Stored Memories:\n{memories_text}\n\nUser Question: {question}"
+
+    completion = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": MEMORY_SYNTHESIS_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        model=_get_model(),
+        max_tokens=300,
+        temperature=0.2,
+    )
+
+    return (completion.choices[0].message.content or "").strip()

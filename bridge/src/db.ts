@@ -63,14 +63,30 @@ export function initDatabase(dbPath: string): Database.Database {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS exempted_chats (
+      jid TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS pending_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      target_jid TEXT NOT NULL,
+      target_name TEXT NOT NULL,
+      message_text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      sent_at TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_at, status);
     CREATE INDEX IF NOT EXISTS idx_todos_chat ON todos(chat_jid, completed);
     CREATE INDEX IF NOT EXISTS idx_messages_chat ON message_log(chat_jid, timestamp);
     CREATE INDEX IF NOT EXISTS idx_messages_text ON message_log(message_text);
+    CREATE INDEX IF NOT EXISTS idx_outbox_status ON pending_outbox(status);
     CREATE INDEX IF NOT EXISTS idx_pending_events_status ON pending_events(status);
   `);
 
-  // Run migrations safely for new columns if table existed
   try {
     db.exec("ALTER TABLE message_log ADD COLUMN chat_name TEXT;");
   } catch {
@@ -196,6 +212,16 @@ export interface LoggedMessage {
   is_from_me: number;
 }
 
+export function saveChatDirectory(jid: string, name: string, isGroup: boolean): void {
+  getDb()
+    .prepare(
+      `INSERT INTO chat_directory (jid, name, is_group, updated_at)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(jid) DO UPDATE SET name = excluded.name, updated_at = datetime('now')`
+    )
+    .run(jid, name, isGroup ? 1 : 0);
+}
+
 export function logMessage(
   chatJid: string,
   chatName: string | null,
@@ -212,19 +238,12 @@ export function logMessage(
     )
     .run(chatJid, chatName, senderJid, senderName, messageText, timestamp, isFromMe ? 1 : 0);
 
-  // Update chat directory
-  if (chatName) {
-    getDb()
-      .prepare(
-        `INSERT INTO chat_directory (jid, name, is_group, updated_at)
-         VALUES (?, ?, ?, datetime('now'))
-         ON CONFLICT(jid) DO UPDATE SET name = excluded.name, updated_at = datetime('now')`
-      )
-      .run(chatJid, chatName, chatJid.endsWith("@g.us") ? 1 : 0);
+  if (chatName && chatName !== "Group Chat" && chatName !== "Contact") {
+    saveChatDirectory(chatJid, chatName, chatJid.endsWith("@g.us"));
   }
 }
 
-export function getRecentMessages(chatJid: string, limit = 30): LoggedMessage[] {
+export function getRecentMessages(chatJid: string, limit = 40): LoggedMessage[] {
   return getDb()
     .prepare(
       `SELECT * FROM message_log
@@ -236,30 +255,90 @@ export function getRecentMessages(chatJid: string, limit = 30): LoggedMessage[] 
     .reverse() as LoggedMessage[];
 }
 
+export function getRecentActiveChats(limit = 5): Array<{ jid: string; name: string; is_group: number; message_count: number }> {
+  return getDb()
+    .prepare(
+      `SELECT m.chat_jid as jid, 
+              COALESCE(d.name, m.chat_name, m.chat_jid) as name, 
+              COALESCE(d.is_group, CASE WHEN m.chat_jid LIKE '%@g.us' THEN 1 ELSE 0 END) as is_group,
+              COUNT(m.id) as message_count
+       FROM message_log m
+       LEFT JOIN chat_directory d ON m.chat_jid = d.jid
+       WHERE m.chat_jid NOT LIKE '%status@broadcast%'
+       GROUP BY m.chat_jid
+       ORDER BY MAX(m.timestamp) DESC
+       LIMIT ?`
+    )
+    .all(limit) as Array<{ jid: string; name: string; is_group: number; message_count: number }>;
+}
+
 export function findChatByNameOrQuery(query: string): { jid: string; name: string } | null {
-  const q = query.trim().toLowerCase();
-  const match = getDb()
+  const rawQ = query.trim().toLowerCase();
+  const cleanedQ = rawQ
+    .replace(/\b(group|chat|the|my|with|for|in|about|messages|recent)\b/gi, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+
+  if (!cleanedQ || cleanedQ.length < 2) return null;
+
+  // 1. Direct and ranked matching against chat_directory
+  const allChats = getDb()
+    .prepare("SELECT jid, name FROM chat_directory")
+    .all() as Array<{ jid: string; name: string }>;
+
+  // Priority 1: Exact match
+  for (const c of allChats) {
+    const cClean = c.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (cClean && cClean === cleanedQ) {
+      return c;
+    }
+  }
+
+  // Priority 2: Word startsWith
+  for (const c of allChats) {
+    const cClean = c.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (cClean && cClean.startsWith(cleanedQ)) {
+      return c;
+    }
+  }
+
+  // Priority 3: Substring contains (only if query >= 3 chars)
+  if (cleanedQ.length >= 3) {
+    for (const c of allChats) {
+      const cClean = c.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (cClean && cClean.length >= 2 && cClean.includes(cleanedQ)) {
+        return c;
+      }
+    }
+  }
+
+  // 2. Matching against message_log sender_name and chat_name
+  const logChats = getDb()
     .prepare(
-      `SELECT jid, name FROM chat_directory
-       WHERE LOWER(name) LIKE ? OR LOWER(jid) LIKE ?
-       ORDER BY updated_at DESC
-       LIMIT 1`
+      `SELECT DISTINCT chat_jid as jid, COALESCE(chat_name, sender_name, chat_jid) as name 
+       FROM message_log 
+       WHERE chat_name IS NOT NULL OR sender_name IS NOT NULL`
     )
-    .get(`%${q}%`, `%${q}%`) as { jid: string; name: string } | undefined;
+    .all() as Array<{ jid: string; name: string }>;
 
-  if (match) return match;
+  // Log exact or startsWith
+  for (const c of logChats) {
+    const cClean = c.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (cClean && (cClean === cleanedQ || cClean.startsWith(cleanedQ))) {
+      return c;
+    }
+  }
 
-  // Fallback: search in message_log chat_name
-  const logMatch = getDb()
-    .prepare(
-      `SELECT chat_jid as jid, chat_name as name FROM message_log
-       WHERE LOWER(chat_name) LIKE ?
-       ORDER BY timestamp DESC
-       LIMIT 1`
-    )
-    .get(`%${q}%`) as { jid: string; name: string } | undefined;
+  if (cleanedQ.length >= 3) {
+    for (const c of logChats) {
+      const cClean = c.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (cClean && cClean.length >= 2 && cClean.includes(cleanedQ)) {
+        return c;
+      }
+    }
+  }
 
-  return logMatch || null;
+  return null;
 }
 
 export function searchMessages(query: string, limit = 10): LoggedMessage[] {
@@ -340,6 +419,24 @@ export function getTodayConfirmedEvents(): PendingEvent[] {
     .all() as PendingEvent[];
 }
 
+export function getUpcomingConfirmedEvents(limit = 15): PendingEvent[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM pending_events
+       WHERE status = 'confirmed' AND (event_date >= date('now') OR event_date IS NULL)
+       ORDER BY event_date ASC, event_time ASC
+       LIMIT ?`
+    )
+    .all(limit) as PendingEvent[];
+}
+
+export function deleteConfirmedEvent(id: number): boolean {
+  const res = getDb()
+    .prepare("DELETE FROM pending_events WHERE id = ?")
+    .run(id);
+  return res.changes > 0;
+}
+
 export function confirmEvent(id: number): void {
   getDb()
     .prepare(
@@ -352,6 +449,106 @@ export function ignoreEvent(id: number): void {
   getDb()
     .prepare(
       "UPDATE pending_events SET status = 'ignored' WHERE id = ?"
+    )
+    .run(id);
+}
+
+// ─── Exempted / Ignored Chats ─────────────────────────────────
+
+export function exemptChat(jid: string, name: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO exempted_chats (jid, name, created_at)
+       VALUES (?, ?, datetime('now'))
+       ON CONFLICT(jid) DO UPDATE SET name = excluded.name`
+    )
+    .run(jid, name);
+}
+
+export function unexemptChat(query: string): boolean {
+  const q = query.trim().toLowerCase();
+  const result = getDb()
+    .prepare(
+      `DELETE FROM exempted_chats
+       WHERE LOWER(name) LIKE ? OR LOWER(jid) LIKE ?`
+    )
+    .run(`%${q}%`, `%${q}%`);
+  return result.changes > 0;
+}
+
+export function isChatExempted(jid: string): boolean {
+  const row = getDb()
+    .prepare("SELECT jid FROM exempted_chats WHERE jid = ?")
+    .get(jid);
+  return Boolean(row);
+}
+
+export function getExemptedChats(): Array<{ jid: string; name: string }> {
+  return getDb()
+    .prepare("SELECT jid, name FROM exempted_chats ORDER BY created_at DESC")
+    .all() as Array<{ jid: string; name: string }>;
+}
+
+// ─── Pending Outbox (Sending messages to groups/contacts) ─────
+
+export interface PendingOutbox {
+  id: number;
+  target_jid: string;
+  target_name: string;
+  message_text: string;
+  status: string;
+  created_at: string;
+  sent_at: string | null;
+}
+
+export function addPendingOutbox(
+  targetJid: string,
+  targetName: string,
+  messageText: string
+): PendingOutbox {
+  const stmt = getDb().prepare(
+    `INSERT INTO pending_outbox (target_jid, target_name, message_text, status)
+     VALUES (?, ?, ?, 'pending')`
+  );
+  const result = stmt.run(targetJid, targetName, messageText);
+  return getDb()
+    .prepare("SELECT * FROM pending_outbox WHERE id = ?")
+    .get(result.lastInsertRowid) as PendingOutbox;
+}
+
+export function getLatestPendingOutbox(): PendingOutbox | null {
+  return (
+    (getDb()
+      .prepare(
+        `SELECT * FROM pending_outbox
+         WHERE status = 'pending'
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get() as PendingOutbox | undefined) || null
+  );
+}
+
+export function markOutboxSent(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE pending_outbox SET status = 'sent', sent_at = datetime('now') WHERE id = ?"
+    )
+    .run(id);
+}
+
+export function updatePendingOutboxText(id: number, newText: string): void {
+  getDb()
+    .prepare(
+      "UPDATE pending_outbox SET message_text = ? WHERE id = ?"
+    )
+    .run(newText, id);
+}
+
+export function cancelPendingOutbox(id: number): void {
+  getDb()
+    .prepare(
+      "UPDATE pending_outbox SET status = 'cancelled' WHERE id = ?"
     )
     .run(id);
 }

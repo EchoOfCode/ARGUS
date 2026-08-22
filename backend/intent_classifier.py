@@ -13,18 +13,22 @@ logger = logging.getLogger("argus.intent")
 
 INTENT_SYSTEM_PROMPT = """\
 You are an intent classifier for a personal AI executive assistant called ARGUS that lives in WhatsApp.
+ARGUS has direct access to local WhatsApp SQLite database (for chats & groups), IMAP emails, todos, reminders, and web search.
 
 Given a message, classify the user's intent into ONE of these categories:
 - "event" — mentions a meeting, appointment, call, or event with a date/time
 - "reminder" — the user wants to be reminded about something later
 - "todo" — add, view, or manage a todo/task
-- "email" — check unread emails, summarize an email, or search emails
+- "email_list" — user wants to view, read, or check their unread emails/inbox
+- "email_summary" — user wants to summarize or read a specific email
+- "email_search" — user wants to search emails
 - "catchup" — summarize recent messages or catch up on a chat/group
-- "memory" — remember a fact/note or recall a remembered item
+- "memory_save" — remember a fact or note
+- "memory_recall" — recall a remembered item or credential hint
 - "search" — search the live web for real-time information, news, current events
 - "briefing" — daily agenda, morning briefing, schedule overview
 - "question" — general knowledge question or conversational request
-- "none" — regular conversation, greeting, or message that doesn't need assistant action
+- "none" — regular conversation, greeting, or background message
 
 RULES:
 1. Return ONLY valid JSON:
@@ -58,28 +62,31 @@ def classify_intent_rules(message_text: str, is_self_chat: bool) -> Dict[str, An
     lower = text.lower()
 
     if is_self_chat:
-        # Email rules
-        if lower in ["emails", "email", "unread", "unread emails", "check email", "inbox"]:
+        # 1. Email rules
+        if re.search(r"\b(email|emails|mail|mails|inbox|unread)\b", lower):
+            if re.search(r"\b(summarize|read|breakdown)\s+email", lower):
+                arg = re.sub(r".*?\b(summarize|read|breakdown)\s+email\s*#?", "", lower).strip()
+                return {"intent": "email_summary", "confidence": 1.0, "should_respond": True, "extract_data": {"query": arg}}
+            if re.search(r"\b(search|find)\s+email", lower):
+                query = re.sub(r".*?\b(search|find)\s+email\s*", "", text, flags=re.IGNORECASE).strip()
+                return {"intent": "email_search", "confidence": 1.0, "should_respond": True, "extract_data": {"query": query}}
             return {"intent": "email_list", "confidence": 1.0, "should_respond": True, "extract_data": None}
 
-        if lower.startswith("summarize email") or lower.startswith("read email"):
-            arg = re.sub(r"^(summarize|read)\s+email\s*#?", "", lower).strip()
-            return {"intent": "email_summary", "confidence": 1.0, "should_respond": True, "extract_data": {"query": arg}}
-
-        if lower.startswith("search email") or lower.startswith("find email"):
-            query = re.sub(r"^(search|find)\s+email\s*", "", lower).strip()
-            return {"intent": "email_search", "confidence": 1.0, "should_respond": True, "extract_data": {"query": query}}
-
-        # Briefing rule
-        if lower in ["briefing", "daily briefing", "morning briefing", "agenda", "today's agenda", "overview"]:
-            return {"intent": "briefing", "confidence": 1.0, "should_respond": True, "extract_data": None}
-
-        # Catchup rule
-        if lower.startswith("catchup") or lower.startswith("catch up") or lower.startswith("recap") or lower.startswith("summarize chat"):
-            target = re.sub(r"^(catchup|catch\s*up|recap|summarize\s*chat)\s*(on|with|for)?\s*", "", text, flags=re.IGNORECASE).strip()
+        # 2. Chat & Group Summarization / Catch-up rules
+        if re.search(r"\b(summarize|summary|catchup|catch\s*up|recap|what happened in|what did they say in)\b", lower):
+            target = re.sub(
+                r".*?\b(summarize|summary|catchup|catch\s*up|recap|what happened in|what did they say in)\s*(the|a|my)?\s*(group\s*chat|group|chat|conversation|messages)?\s*(on|with|for|in|about)?\s*",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).strip()
             return {"intent": "catchup", "confidence": 1.0, "should_respond": True, "extract_data": {"target": target}}
 
-        # Memory rules
+        # 3. Briefing rule
+        if re.search(r"\b(briefing|agenda|daily brief|morning brief|today'?s plan|overview of today)\b", lower):
+            return {"intent": "briefing", "confidence": 1.0, "should_respond": True, "extract_data": None}
+
+        # 4. Memory rules
         if lower.startswith("remember ") or lower.startswith("note that ") or lower.startswith("save note "):
             fact = re.sub(r"^(remember|note\s+that|save\s+note)\s*", "", text, flags=re.IGNORECASE).strip()
             return {"intent": "memory_save", "confidence": 1.0, "should_respond": True, "extract_data": {"fact": fact}}
@@ -88,12 +95,12 @@ def classify_intent_rules(message_text: str, is_self_chat: bool) -> Dict[str, An
             query = re.sub(r"^(recall|what\s+is\s+my|where\s+is\s+my|where\s+did\s+i\s+put)\s*", "", text, flags=re.IGNORECASE).strip()
             return {"intent": "memory_recall", "confidence": 0.95, "should_respond": True, "extract_data": {"query": query}}
 
-        # Web search rules
+        # 5. Web search rules
         if lower.startswith("search ") or lower.startswith("google ") or lower.startswith("web "):
             query = re.sub(r"^(search|google|web)\s*", "", text, flags=re.IGNORECASE).strip()
             return {"intent": "search", "confidence": 1.0, "should_respond": True, "extract_data": {"query": query}}
 
-        # Reminder rules
+        # 6. Reminder rules
         if lower.startswith("remind me ") or lower.startswith("reminder "):
             return {"intent": "reminder", "confidence": 1.0, "should_respond": True, "extract_data": None}
 
@@ -143,10 +150,22 @@ def classify_intent_llm(message_text: str, is_self_chat: bool, timestamp: str) -
 
     try:
         result = json.loads(cleaned)
-        return result
-    except json.JSONDecodeError:
+        if not isinstance(result, dict):
+            result = {}
+        return {
+            "intent": result.get("intent", "general_qa" if is_self_chat else "none"),
+            "confidence": float(result.get("confidence", 0.8)),
+            "should_respond": bool(result.get("should_respond", is_self_chat)),
+            "extract_data": result.get("extract_data"),
+        }
+    except Exception:
         logger.error("Failed to parse intent response: %s", raw)
-        return {"intent": "none", "confidence": 0.0, "should_respond": False, "extract_data": None}
+        return {
+            "intent": "general_qa" if is_self_chat else "none",
+            "confidence": 0.5,
+            "should_respond": is_self_chat,
+            "extract_data": None,
+        }
 
 
 def classify_intent(message_text: str, is_self_chat: bool, timestamp: str) -> Dict[str, Any]:

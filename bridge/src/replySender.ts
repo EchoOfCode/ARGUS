@@ -5,6 +5,12 @@ import { Config } from "./config.js";
 const logger = pino({ name: "argus:reply" });
 
 let lastSendTime = 0;
+const sentMessageIds = new Set<string>();
+
+export function isBotSentMessage(messageId?: string | null): boolean {
+  if (!messageId) return false;
+  return sentMessageIds.has(messageId);
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -25,10 +31,22 @@ async function rateLimitedSend(
   }
 
   try {
-    await sock.sendMessage(jid, content);
+    const result = await sock.sendMessage(jid, content);
     lastSendTime = Date.now();
+
+    if (result?.key?.id) {
+      sentMessageIds.add(result.key.id);
+      // Keep set size bounded
+      if (sentMessageIds.size > 2000) {
+        const first = sentMessageIds.values().next().value;
+        if (first) sentMessageIds.delete(first);
+      }
+    }
+
+    console.log(`📤 Reply sent to [${jid}]:\n${content.text.substring(0, 120)}${content.text.length > 120 ? "..." : ""}\n`);
     logger.info({ to: jid, length: content.text.length }, "Message sent");
   } catch (err) {
+    console.error(`❌ Failed to send reply to [${jid}]:`, err);
     logger.error({ err, to: jid }, "Failed to send message");
     throw err;
   }
@@ -81,6 +99,8 @@ export async function sendReminder(
   await sendText(sock, jid, message, config);
 }
 
+import { generateGoogleCalendarUrl } from "./calendarHelper.js";
+
 export async function sendEventAdded(
   sock: WASocket,
   jid: string,
@@ -90,7 +110,15 @@ export async function sendEventAdded(
   config: Config
 ): Promise<void> {
   const timeStr = time ? ` at ${formatTime(time)}` : " (all day)";
-  const message = `✅ *Added to calendar:* ${title} — ${formatDate(date)}${timeStr}`;
+  const gcalUrl = generateGoogleCalendarUrl(title, date, time);
+  const message = [
+    `✅ *Added to Calendar:*`,
+    `📌 *${title}*`,
+    `📅 ${formatDate(date)}${timeStr}`,
+    ``,
+    `🔗 *1-Tap Add to Google Calendar:*`,
+    `${gcalUrl}`,
+  ].join("\n");
   await sendText(sock, jid, message, config);
 }
 

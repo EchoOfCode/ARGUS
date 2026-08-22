@@ -4,13 +4,19 @@ Supports Gmail (with App Password), Outlook, Yahoo, iCloud, and custom IMAP serv
 """
 
 import email
+import email.message
 from email.header import decode_header
+from email.message import Message
 import html
 import imaplib
 import logging
 import os
 import re
 from typing import Any, Dict, List, Optional
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger("argus.email")
 
@@ -64,8 +70,7 @@ def _extract_body_and_snippet(msg: email.message.Message) -> tuple[str, str]:
                 try:
                     payload = part.get_payload(decode=True)
                     charset = part.get_content_charset() or "utf-8"
-                    body_text = payload.decode(charset, errors="replace")
-                    break
+                    body_text += payload.decode(charset, errors="replace") + "\n"
                 except Exception:
                     pass
             elif content_type == "text/html" and not body_text:
@@ -73,7 +78,7 @@ def _extract_body_and_snippet(msg: email.message.Message) -> tuple[str, str]:
                     payload = part.get_payload(decode=True)
                     charset = part.get_content_charset() or "utf-8"
                     raw_html = payload.decode(charset, errors="replace")
-                    body_text = _strip_html(raw_html)
+                    body_text += _strip_html(raw_html) + "\n"
                 except Exception:
                     pass
     else:
@@ -97,11 +102,21 @@ def _extract_body_and_snippet(msg: email.message.Message) -> tuple[str, str]:
 class EmailReader:
     """Handles IMAP connections to fetch, search, and parse emails."""
 
-    def __init__(self):
-        self.host = os.getenv("EMAIL_HOST", "imap.gmail.com")
-        self.port = int(os.getenv("EMAIL_PORT", "993"))
-        self.user = os.getenv("EMAIL_USER", "")
-        self.password = os.getenv("EMAIL_PASS", "")
+    @property
+    def host(self) -> str:
+        return os.getenv("EMAIL_HOST", "imap.gmail.com")
+
+    @property
+    def port(self) -> int:
+        return int(os.getenv("EMAIL_PORT", "993"))
+
+    @property
+    def user(self) -> str:
+        return os.getenv("EMAIL_USER", "")
+
+    @property
+    def password(self) -> str:
+        return os.getenv("EMAIL_PASS", "")
 
     def is_configured(self) -> bool:
         """Check if email credentials are set."""

@@ -8,12 +8,16 @@ import {
   getLatestPendingEvent,
   confirmEvent,
   ignoreEvent,
+  isChatExempted,
+  getDb,
+  saveChatDirectory,
 } from "./db.js";
 import {
   sendText,
   sendEventConfirmation,
   sendEventAdded,
   sendError,
+  isBotSentMessage,
 } from "./replySender.js";
 import { handleSelfChatMessage } from "./selfChat.js";
 import { callBrain, callBrainMultipart } from "./brainClient.js";
@@ -28,8 +32,28 @@ function hasSchedulingCue(text: string): boolean {
   return SCHEDULING_REGEX.test(text);
 }
 
+function normalizeJid(jid: string): string {
+  if (!jid) return "";
+  const base = jid.split(":")[0];
+  const user = base.split("@")[0];
+  const server = jid.includes("@g.us") ? "g.us" : "s.whatsapp.net";
+  return `${user}@${server}`;
+}
+
+function extractRawMessage(msg: WAMessage): any {
+  let m: any = msg.message;
+  if (!m) return null;
+
+  if (m.ephemeralMessage) m = m.ephemeralMessage.message;
+  if (m.viewOnceMessage) m = m.viewOnceMessage.message;
+  if (m.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
+  if (m.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+
+  return m;
+}
+
 function getMessageText(msg: WAMessage): string | null {
-  const m = msg.message;
+  const m = extractRawMessage(msg);
   if (!m) return null;
 
   return (
@@ -38,6 +62,9 @@ function getMessageText(msg: WAMessage): string | null {
     m.imageMessage?.caption ||
     m.videoMessage?.caption ||
     m.documentMessage?.caption ||
+    m.buttonsResponseMessage?.selectedButtonId ||
+    m.templateButtonReplyMessage?.selectedId ||
+    m.listResponseMessage?.singleSelectReply?.selectedRowId ||
     null
   );
 }
@@ -50,7 +77,8 @@ function shouldScanChat(jid: string, config: Config): boolean {
   if (jid === "status@broadcast") return false;
 
   if (config.listenMode === "allowlist") {
-    return config.allowedJids.includes(jid);
+    const norm = normalizeJid(jid);
+    return config.allowedJids.some((a) => normalizeJid(a) === norm);
   }
 
   return true;
@@ -72,8 +100,69 @@ function parseConfirmationReply(text: string): "yes" | "ignore" | "edit" | null 
   return null;
 }
 
+const groupMetaCache = new Map<string, string>();
+
+async function resolveChatName(
+  sock: WASocket,
+  chatJid: string,
+  senderName: string | null
+): Promise<string> {
+  if (chatJid.endsWith("@g.us")) {
+    if (groupMetaCache.has(chatJid)) {
+      return groupMetaCache.get(chatJid)!;
+    }
+    try {
+      const row = getDb()
+        .prepare("SELECT name FROM chat_directory WHERE jid = ?")
+        .get(chatJid) as { name: string } | undefined;
+      if (row && row.name) {
+        groupMetaCache.set(chatJid, row.name);
+        return row.name;
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      const meta = await sock.groupMetadata(chatJid);
+      if (meta && meta.subject) {
+        groupMetaCache.set(chatJid, meta.subject);
+        return meta.subject;
+      }
+    } catch {
+      // ignore
+    }
+    return senderName ? `Group (${senderName})` : "Group Chat";
+  }
+  return senderName || "Contact";
+}
+
 /**
- * Handle voice notes / audio messages sent in self-chat.
+ * Checks if a chat is a dedicated ARGUS command center (Self-Chat or Group named ARGUS).
+ */
+export function isDedicatedCommandChat(
+  chatJid: string,
+  chatName: string,
+  config: Config
+): boolean {
+  const normChat = normalizeJid(chatJid);
+  const normMy = normalizeJid(config.myJid);
+
+  // Self-chat match
+  if (normChat === normMy) return true;
+
+  // Group name match
+  const cleanName = chatName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const targetName = config.dedicatedGroupName.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  if (cleanName.includes(targetName) || cleanName === "argus" || cleanName === "argusai") {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Handle voice notes / audio messages sent in command chat.
  */
 async function handleVoiceNote(
   sock: WASocket,
@@ -82,7 +171,7 @@ async function handleVoiceNote(
   config: Config
 ): Promise<void> {
   try {
-    logger.info("Voice note detected in self-chat, downloading audio buffer...");
+    console.log(`🎙️ Voice note detected in ${chatJid}, downloading...`);
     const buffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
 
     if (!buffer || buffer.length === 0) {
@@ -104,7 +193,7 @@ async function handleVoiceNote(
 
     if (transcriptionRes && transcriptionRes.success && transcriptionRes.transcription) {
       const text = transcriptionRes.transcription.trim();
-      logger.info({ transcription: text }, "Voice note transcribed successfully");
+      console.log(`🎙️ Transcribed: "${text}"`);
       await sendText(sock, chatJid, `🎙️ _"${text}"_`, config);
       await handleSelfChatMessage(sock, text, chatJid, config);
     } else {
@@ -124,6 +213,11 @@ export async function handleMessage(
   msg: WAMessage,
   config: Config
 ): Promise<void> {
+  // ─── Loop Prevention 1: Ignore messages sent by ARGUS itself ───
+  if (msg.key.id && isBotSentMessage(msg.key.id)) {
+    return;
+  }
+
   const chatJid = msg.key.remoteJid;
   if (!chatJid) return;
 
@@ -132,8 +226,14 @@ export async function handleMessage(
   const senderName = getSenderName(msg);
   const timestamp = new Date((msg.messageTimestamp as number) * 1000).toISOString();
 
-  // ─── Voice Note in Self-Chat ─────────────────────────────────
-  if (chatJid === config.myJid && msg.message?.audioMessage) {
+  // Derive chat name / group name
+  const chatName = await resolveChatName(sock, chatJid, senderName);
+  const isCommandChat = isDedicatedCommandChat(chatJid, chatName, config);
+
+  const rawMsg = extractRawMessage(msg);
+
+  // ─── Voice Note in Command Chat (Self-Chat or Dedicated ARGUS Group) ───
+  if (isCommandChat && rawMsg?.audioMessage) {
     await handleVoiceNote(sock, msg, chatJid, config);
     return;
   }
@@ -141,21 +241,38 @@ export async function handleMessage(
   const text = getMessageText(msg);
   if (!text) return;
 
-  // Derive chat name / group name
-  const chatName = chatJid.endsWith("@g.us")
-    ? (msg as any).groupMetadata?.subject || senderName || "Group Chat"
-    : senderName || "Contact";
+  // ─── Loop Prevention 2: Ignore bot formatted output prefixes ───
+  const botPrefixes = [
+    "🤖", "⚠️", "✅", "📝", "⏰", "🔔", "📬", "💬", "🧠", "🌐", "🗓️", "🎙️",
+    "No pending event", "Could not compile", "Something went wrong"
+  ];
+  if (botPrefixes.some((p) => text.trim().startsWith(p))) {
+    return;
+  }
+
+  // ─── Check Chat Exemption (ignore exempted chats) ──────────
+  if (!isCommandChat && isChatExempted(chatJid)) {
+    return;
+  }
+
+  console.log(`📩 [${chatName || chatJid}] ${senderName || (isFromMe ? "Me" : "Contact")}: "${text}"`);
+
+  // Auto-index active sender into directory if pushName is present
+  if (senderJid && senderName && !senderJid.endsWith("@g.us")) {
+    saveChatDirectory(senderJid, senderName, false);
+  }
 
   // Log message in local SQLite database for history & catch-up
   logMessage(chatJid, chatName, senderJid, senderName, text, timestamp, isFromMe);
 
-  logger.debug(
-    { chat: chatJid, from: senderName || senderJid, isFromMe, text: text.substring(0, 80) },
-    "Message logged"
-  );
+  // Explicit Command Keyword Check
+  const isExplicitCommand =
+    isCommandChat ||
+    /^\s*(help|\/help|email|emails|mail|mails|inbox|summarize|summ[ae]ri[zs]e|catchup|catch\s*up|recap|todos?|add\s+|remind\s+|briefing|agenda|remember\s+|recall\s+|what\s+is\s+my|where\s+is\s+my|search\s+|google\s+|web\s+|exempt|unexempt)\b/i.test(text);
 
-  // ─── Self-chat: command mode ─────────────────────────────────
-  if (chatJid === config.myJid && isFromMe) {
+  // ─── Command Mode: Self-Chat OR Dedicated ARGUS Group OR Explicit Command ───
+  if (isCommandChat || (isFromMe && isExplicitCommand)) {
+    console.log(`⚡ Processing ARGUS Command in [${chatName || chatJid}]: "${text}"`);
     await handleSelfChatMessage(sock, text, chatJid, config);
     return;
   }
@@ -170,8 +287,8 @@ export async function handleMessage(
     return;
   }
 
-  // ─── Incoming messages from others ─────────────────────────
-  if (!shouldScanChat(chatJid, config)) {
+  // ─── Incoming messages from others (passive scan) ───────────
+  if (!config.enablePassiveAlerts || !shouldScanChat(chatJid, config)) {
     return;
   }
 
@@ -208,7 +325,7 @@ export async function handleMessage(
           data.confidence
         );
 
-        // Send confirmation prompt to your self-chat
+        // Send confirmation prompt to your self-chat or dedicated group
         await sendEventConfirmation(
           sock,
           config.myJid,
@@ -220,10 +337,7 @@ export async function handleMessage(
           config
         );
 
-        logger.info(
-          { eventId: pending.id, title: data.title, date: data.date },
-          "Event detected and confirmation sent"
-        );
+        console.log(`🗓️ Event detected from [${chatName}]: "${data.title}" on ${data.date}`);
       }
     }
   } catch (err) {

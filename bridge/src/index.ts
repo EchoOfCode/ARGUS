@@ -1,8 +1,40 @@
+// ─── Filter internal libsignal Bad MAC logs on background packets ───
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+process.stderr.write = ((chunk: any, encoding?: any, callback?: any) => {
+  const str = chunk ? chunk.toString() : "";
+  if (
+    str.includes("Bad MAC") ||
+    str.includes("Session error") ||
+    str.includes("SessionCipher") ||
+    str.includes("verifyMAC") ||
+    str.includes("Failed to decrypt message with any known session")
+  ) {
+    if (typeof encoding === "function") encoding();
+    if (typeof callback === "function") callback();
+    return true;
+  }
+  return originalStderrWrite(chunk, encoding, callback);
+}) as any;
+
+const originalConsoleError = console.error.bind(console);
+console.error = (...args: any[]) => {
+  const str = args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
+  if (
+    str.includes("Bad MAC") ||
+    str.includes("Session error") ||
+    str.includes("Failed to decrypt message with any known session")
+  ) {
+    return;
+  }
+  originalConsoleError(...args);
+};
+
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
+  Browsers,
 } from "@whiskeysockets/baileys";
 import type { WASocket } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
@@ -19,6 +51,24 @@ const logger = pino({ level: "info", name: "argus:bridge" });
 
 let sock: WASocket | null = null;
 let config: Config;
+
+const msgRetryCounterCache = {
+  store: new Map<string, number>(),
+  get<T = any>(key: string): T | undefined {
+    return this.store.get(key) as any;
+  },
+  set(key: string, value: any) {
+    this.store.set(key, value);
+  },
+  del(key: string) {
+    this.store.delete(key);
+  },
+  flushAll() {
+    this.store.clear();
+  },
+};
+
+const rawMessageStore = new Map<string, any>();
 
 async function connectToWhatsApp(): Promise<void> {
   config = loadConfig();
@@ -43,9 +93,18 @@ async function connectToWhatsApp(): Promise<void> {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }) as any),
     },
-    printQRInTerminal: false, // We'll handle QR manually for better display
+    browser: Browsers.windows("Desktop"),
+    msgRetryCounterCache,
+    printQRInTerminal: false,
     generateHighQualityLinkPreview: false,
     syncFullHistory: false,
+    getMessage: async (key) => {
+      if (key.id && rawMessageStore.has(key.id)) {
+        return rawMessageStore.get(key.id);
+      }
+      return undefined;
+    },
+    patchMessageBeforeSending: (message) => message,
   });
 
   // ─── Connection events ──────────────────────────────────────
@@ -98,8 +157,44 @@ async function connectToWhatsApp(): Promise<void> {
 
       logger.info("WhatsApp connection established");
 
+      // Sync participating groups to chat directory
+      try {
+        const groups = await sock!.groupFetchAllParticipating();
+        for (const [jid, metadata] of Object.entries(groups)) {
+          if (metadata && metadata.subject) {
+            initDatabase(config.dbPath);
+            const { saveChatDirectory } = await import("./db.js");
+            saveChatDirectory(jid, metadata.subject, true);
+          }
+        }
+        logger.info({ groupCount: Object.keys(groups).length }, "Synced WhatsApp groups into directory");
+      } catch (err) {
+        logger.warn({ err }, "Could not auto-fetch group directory");
+      }
+
       // Start the reminder cron worker
       startReminderWorker(sock!, config);
+    }
+  });
+
+  // ─── Contact Address Book Synchronization ───────────────────
+  sock.ev.on("contacts.upsert", async (contacts: any[]) => {
+    const { saveChatDirectory } = await import("./db.js");
+    for (const c of contacts) {
+      const name = c.name || c.notify || c.verifiedName;
+      if (c.id && name) {
+        saveChatDirectory(c.id, name, false);
+      }
+    }
+  });
+
+  sock.ev.on("contacts.update", async (updates: any[]) => {
+    const { saveChatDirectory } = await import("./db.js");
+    for (const c of updates) {
+      const name = c.name || c.notify || c.verifiedName;
+      if (c.id && name) {
+        saveChatDirectory(c.id, name, false);
+      }
     }
   });
 
@@ -109,25 +204,19 @@ async function connectToWhatsApp(): Promise<void> {
   // ─── Message events ─────────────────────────────────────────
 
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    // Only process new messages, not history sync
-    if (type !== "notify") return;
-
     for (const msg of messages) {
       // Skip status broadcasts
       if (msg.key.remoteJid === "status@broadcast") continue;
 
-      // Skip protocol messages (reactions, receipts, etc.)
+      // Skip empty protocol messages (like key distribution, receipts)
       if (!msg.message) continue;
 
-      // Skip messages that are too old (more than 2 minutes)
-      const msgTimestamp = (msg.messageTimestamp as number) * 1000;
-      const age = Date.now() - msgTimestamp;
-      if (age > 120_000) {
-        logger.debug(
-          { age: Math.round(age / 1000), key: msg.key },
-          "Skipping old message"
-        );
-        continue;
+      if (msg.key.id && msg.message) {
+        rawMessageStore.set(msg.key.id, msg.message);
+        if (rawMessageStore.size > 2000) {
+          const first = rawMessageStore.keys().next().value;
+          if (first) rawMessageStore.delete(first);
+        }
       }
 
       try {
@@ -151,6 +240,14 @@ console.log("");
 connectToWhatsApp().catch((err) => {
   logger.fatal({ err }, "Fatal error starting ARGUS bridge");
   process.exit(1);
+});
+
+process.on("unhandledRejection", (err: any) => {
+  if (err?.message?.includes("Bad MAC")) {
+    logger.debug("Signal session key retry handled (Bad MAC).");
+    return;
+  }
+  logger.warn({ err }, "Unhandled promise warning");
 });
 
 // Graceful shutdown

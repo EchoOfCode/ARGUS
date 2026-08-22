@@ -1,15 +1,64 @@
-# Root .gitignore for ARGUS
+# ===================================================================
+# ARGUS — Root Git Ignore (Comprehensive Security & Build Artifacts)
+# ===================================================================
+
+# ─── Environment & Secrets (NEVER COMMIT) ──────────────────────────
 .env
-*.pyc
-__pycache__/
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+bridge/.env
+bridge/.env.*
+!bridge/.env.example
 
-# Bridge
-bridge/node_modules/
-bridge/dist/
+# ─── WhatsApp Session Keys & Pairwise Credentials ──────────────────
 bridge/auth_info/
-bridge/argus.db
+auth_info/
+*.session
+*.key
+*.pem
+*.cert
 
-# Android
+# ─── Local SQLite Databases & Logs ──────────────────────────────────
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+backend/argus_memory.db
+bridge/argus.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Node.js & TypeScript ──────────────────────────────────────────
+node_modules/
+bridge/node_modules/
+remotion/node_modules/
+dist/
+bridge/dist/
+build/
+.npm/
+
+# ─── Python Virtual Environments & Bytecode ────────────────────────
+__pycache__/
+*/__pycache__/
+*/*/__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# ─── Android Studio / Gradle Build ─────────────────────────────────
 android/.gradle/
 android/build/
 android/app/build/
@@ -17,7 +66,24 @@ android/local.properties
 android/.idea/
 *.apk
 *.aab
+*.keystore
+*.jks
 
-# OS
+# ─── Remotion Video Renders & Caches ───────────────────────────────
+remotion/out/
+remotion/.cache/
+*.mp4
+*.webm
+*.mov
+
+# ─── OS & IDE Configuration ────────────────────────────────────────
 .DS_Store
 Thumbs.db
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+scratch/
+tmp/

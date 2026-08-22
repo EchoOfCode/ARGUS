@@ -1,0 +1,49 @@
+version: "3.8"
+
+services:
+  # ─── ARGUS AI Brain (FastAPI + Groq + Memory + IMAP) ──────────
+  argus-brain:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: argus-brain
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/argus_memory.db:/app/argus_memory.db
+    networks:
+      - argus-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ─── ARGUS WhatsApp Bridge (Node.js + Baileys + SQLite) ────────
+  argus-bridge:
+    build:
+      context: ./bridge
+      dockerfile: Dockerfile
+    container_name: argus-bridge
+    restart: unless-stopped
+    depends_on:
+      argus-brain:
+        condition: service_healthy
+    env_file:
+      - ./bridge/.env
+    environment:
+      - AI_BRAIN_URL=http://argus-brain:8000
+    volumes:
+      - ./bridge/auth_info:/app/auth_info
+      - ./bridge/argus.db:/app/argus.db
+    networks:
+      - argus-network
+    stdin_open: true
+    tty: true
+
+networks:
+  argus-network:
+    driver: bridge

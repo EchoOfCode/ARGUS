@@ -23,19 +23,30 @@ import os
 from typing import Optional
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 
 from audio_transcriber import transcribe_audio_bytes
 from email_reader import email_reader
 from groq_client import (
     answer_question,
+    classify_and_tag_memory,
     extract_event,
     generate_briefing,
     summarize_email,
     summarize_messages,
+    synthesize_memory_answer,
 )
 from intent_classifier import classify_intent
-from memory import recall_memories, save_memory
+from memory import (
+    delete_memory,
+    delete_memory_by_query,
+    get_memories_by_category,
+    recall_memories,
+    save_memory,
+)
 from models import (
     AskRequest,
     AskResponse,
@@ -48,6 +59,9 @@ from models import (
     EmailSummaryResponse,
     ExtractRequest,
     ExtractResponse,
+    MemoryDeleteRequest,
+    MemoryDeleteResponse,
+    MemoryListResponse,
     MemoryRecallRequest,
     MemoryRecallResponse,
     MemorySaveRequest,
@@ -329,14 +343,29 @@ async def save_memory_endpoint(
     request: MemorySaveRequest,
     x_argus_secret: str | None = Header(None),
 ) -> MemorySaveResponse:
-    """Store a fact in long-term memory."""
+    """Store a fact with AI auto-categorization and entity extraction."""
     verify_secret(x_argus_secret)
 
-    saved = save_memory(request.fact, request.category)
+    category = request.category
+    entities = request.entities
+
+    # If category or entities not provided, auto-classify with Groq LLM
+    if not category or category == "general" or entities is None:
+        try:
+            detected_cat, detected_entities = classify_and_tag_memory(request.fact)
+            category = category if (category and category != "general") else detected_cat
+            entities = entities if entities is not None else detected_entities
+        except Exception as e:
+            logger.warning("Auto-tagging memory failed: %s", e)
+            category = category or "general"
+            entities = entities or []
+
+    saved = save_memory(request.fact, category=category, entities=entities)
     return MemorySaveResponse(
         id=saved["id"],
         fact=saved["fact_text"],
         category=saved["category"],
+        entities=saved.get("entities", []),
         message="Stored in memory.",
     )
 
@@ -346,16 +375,53 @@ async def recall_memory_endpoint(
     request: MemoryRecallRequest,
     x_argus_secret: str | None = Header(None),
 ) -> MemoryRecallResponse:
-    """Recall facts from long-term memory."""
+    """Recall facts and synthesize natural conversational answer."""
     verify_secret(x_argus_secret)
 
     results = recall_memories(request.query, limit=request.limit)
     answer = None
     if results:
-        mem_text = "\n".join([f"- {r['fact_text']}" for r in results])
-        answer = answer_question(request.query, memory_context=mem_text)
+        try:
+            answer = synthesize_memory_answer(request.query, results)
+        except Exception as e:
+            logger.warning("Memory synthesis failed: %s", e)
+            mem_text = "\n".join([f"- {r['fact_text']}" for r in results])
+            answer = mem_text
 
     return MemoryRecallResponse(memories=results, answer=answer)
+
+
+@app.post("/memory/list", response_model=MemoryListResponse)
+async def list_memories_endpoint(
+    x_argus_secret: str | None = Header(None),
+) -> MemoryListResponse:
+    """Get full categorized Second Brain knowledge base."""
+    verify_secret(x_argus_secret)
+
+    grouped = get_memories_by_category()
+    total = sum(len(items) for items in grouped.values())
+    return MemoryListResponse(categories=grouped, total_count=total)
+
+
+@app.post("/memory/delete", response_model=MemoryDeleteResponse)
+async def delete_memory_endpoint(
+    request: MemoryDeleteRequest,
+    x_argus_secret: str | None = Header(None),
+) -> MemoryDeleteResponse:
+    """Delete memories by ID or keyword query."""
+    verify_secret(x_argus_secret)
+
+    count = 0
+    if request.id is not None:
+        success = delete_memory(request.id)
+        count = 1 if success else 0
+    elif request.query:
+        count = delete_memory_by_query(request.query)
+
+    return MemoryDeleteResponse(
+        deleted_count=count,
+        message=f"Deleted {count} memory item(s)." if count > 0 else "No matching memory found.",
+    )
 
 
 # ─── Live Web Search ────────────────────────────────────────────

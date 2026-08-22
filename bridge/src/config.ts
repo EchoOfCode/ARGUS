@@ -20,6 +20,8 @@ export interface Config {
   briefingHour: number;
   briefingMinute: number;
   enableDailyBriefing: boolean;
+  dedicatedGroupName: string;
+  enablePassiveAlerts: boolean;
 }
 
 function requireEnv(key: string): string {
@@ -44,6 +46,8 @@ export function loadConfig(): Config {
   const briefingHour = parseInt(process.env.BRIEFING_HOUR || "8", 10);
   const briefingMinute = parseInt(process.env.BRIEFING_MINUTE || "0", 10);
   const enableDailyBriefing = process.env.ENABLE_DAILY_BRIEFING !== "false";
+  const dedicatedGroupName = process.env.DEDICATED_GROUP_NAME || "ARGUS";
+  const enablePassiveAlerts = process.env.ENABLE_PASSIVE_ALERTS === "true"; // Default false
 
   return {
     myJid,
@@ -57,5 +61,7 @@ export function loadConfig(): Config {
     briefingHour,
     briefingMinute,
     enableDailyBriefing,
+    dedicatedGroupName,
+    enablePassiveAlerts,
   };
 }

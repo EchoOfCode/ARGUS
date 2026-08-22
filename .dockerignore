@@ -1,0 +1,39 @@
+# ===================================================================
+# ARGUS — Docker Build Context Ignore
+# ===================================================================
+
+.git
+.gitignore
+.vscode
+*.md
+!requirements.txt
+
+# Dependencies & Build artifacts
+node_modules
+*/node_modules
+dist
+*/dist
+__pycache__
+*/__pycache__
+*.pyc
+.venv
+venv
+env
+
+# Local database files & auth (persisted via docker-compose volumes)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+auth_info
+bridge/auth_info
+
+# Android & Remotion
+android/
+remotion/
+
+# Logs & Scripts
+*.log
+*.bat
+scratch/
+tmp/
