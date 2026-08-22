@@ -506,6 +506,8 @@ async def autopilot_reply_endpoint(
         recent_history=request.recent_chat_history,
         personal_memories=relevant_memories,
         custom_instruction=request.custom_instruction,
+        current_time_str=request.current_time_str,
+        user_style_samples=request.user_style_samples,
     )
 
     return AutopilotReplyResponse(

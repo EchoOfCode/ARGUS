@@ -281,6 +281,8 @@ class AutopilotReplyRequest(BaseModel):
     incoming_message: str
     recent_chat_history: List[Dict[str, Any]] = []
     custom_instruction: Optional[str] = None
+    current_time_str: Optional[str] = None
+    user_style_samples: List[str] = []
 
 
 class AutopilotReplyResponse(BaseModel):

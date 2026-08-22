@@ -422,49 +422,61 @@ def generate_autopilot_persona_reply(
     recent_history: Optional[List[Dict[str, Any]]] = None,
     personal_memories: Optional[List[Dict[str, Any]]] = None,
     custom_instruction: Optional[str] = None,
+    current_time_str: Optional[str] = None,
+    user_style_samples: Optional[List[str]] = None,
 ) -> str:
-    """Generate an authentic WhatsApp reply acting dynamically as the repository owner."""
+    """Generate an authentic, grounded, and hyper-realistic WhatsApp reply acting as the owner."""
     client = _get_client()
     model = _get_model()
     owner_name, owner_bio, owner_tone = _get_owner_info()
 
     bio_str = f" ({owner_bio})" if owner_bio else ""
+    
     system_prompt = f"""\
 You are an autonomous AI clone acting and speaking DIRECTLY as {owner_name}{bio_str}.
 You are responding to an incoming WhatsApp message from a friend, classmate, or colleague.
 
 YOUR PERSONA & SPEAKING STYLE:
-• You ARE {owner_name}. Never refer to yourself in the third person or say "as an AI assistant" or "ARGUS".
+• You ARE {owner_name}. NEVER refer to yourself in the third person or say "as an AI" or "ARGUS".
 • Tone: {owner_tone}.
-• Style: Short, conversational, friendly. Use natural phrasing (e.g. "hey", "yeah", "sounds good", "give me a sec", "got it"). Avoid overly formal corporate speak or robotic greetings.
-• Ground-truth Knowledge: Use the provided Second Brain facts and personal schedule to give accurate answers. Never make up commitments or facts.
-• Context Instruction: If a custom situation is provided (e.g. "studying for exams", "busy in meeting"), naturally reflect that.
+• Style: Short, conversational, friendly. Text like a real human on WhatsApp (e.g. "hey", "yeah", "sounds good", "give me a sec", "got it").
+• Avoid robotic pleasantries: Don't say "I hope this message finds you well" or "How can I assist you today?".
+• Anti-Repetition: If recent messages show you already said hello or asked what's up, do NOT repeat "Hey" or "Hi" again—jump straight to the point.
+• Uncertainty Handling: If someone asks a factual question that you don't know and isn't in your Second Brain (e.g. specific locations, grades, keys, file links), respond naturally like a real busy person: (e.g. "not sure bro, let me check and text u in a bit", "idk man, let me check once I'm free"). NEVER hallucinate or invent facts.
+• Security & Financial Guardrail: If someone asks for OTPs, passwords, bank transfers, or PINs, deflect immediately: "can't send on text, call me later".
 
 RULES:
 1. Return ONLY the exact text message to be sent via WhatsApp.
-2. Do not include markdown code fences, prefixes like "{owner_name}:", or quotes around the reply.
-3. Keep it brief (1-3 sentences max, like a real WhatsApp text).
+2. Do not include quotes, prefixes like "{owner_name}:", or markdown code fences.
+3. Keep it crisp (1-2 short sentences max, like a real WhatsApp text).
 """
 
     context_parts = []
+    if current_time_str:
+        context_parts.append(f"Current Date & Time: {current_time_str}")
+
     if sender_name:
         context_parts.append(f"Sender Name: {sender_name}")
 
     if custom_instruction:
-        context_parts.append(f"Your Current Situation/Note: {custom_instruction}")
+        context_parts.append(f"Your Current Activity / Note: {custom_instruction}")
 
     if personal_memories:
         facts = "\n".join(f"- {m.get('fact_text')}" for m in personal_memories)
-        context_parts.append(f"Your Second Brain Context / Facts:\n{facts}")
+        context_parts.append(f"Your Ground-Truth Second Brain Facts:\n{facts}")
+
+    if user_style_samples:
+        samples_text = "\n".join(f"• \"{s}\"" for s in user_style_samples[:4])
+        context_parts.append(f"Examples of Your Real Texting Style:\n{samples_text}")
 
     if recent_history:
         history_lines = []
-        for msg in recent_history[-6:]:
+        for msg in recent_history[-8:]:
             sender_label = f"You ({owner_name})" if msg.get("is_from_me") else sender_name
             history_lines.append(f"{sender_label}: {msg.get('text') or msg.get('message_text')}")
         context_parts.append("Recent Chat History:\n" + "\n".join(history_lines))
 
-    context_parts.append(f"Latest Incoming Message from {sender_name}:\n{incoming_message}")
+    context_parts.append(f"Incoming Message to reply to from {sender_name}:\n\"{incoming_message}\"")
     user_prompt = "\n\n".join(context_parts)
 
     try:
@@ -474,18 +486,21 @@ RULES:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.7,
-            max_tokens=200,
+            temperature=0.6,
+            max_tokens=180,
         )
         raw = response.choices[0].message.content or ""
         cleaned = raw.strip()
         cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
         if cleaned.startswith('"') and cleaned.endswith('"'):
             cleaned = cleaned[1:-1].strip()
+        if cleaned.startswith(f"{owner_name}:"):
+            cleaned = cleaned[len(owner_name) + 1:].strip()
         return cleaned
     except Exception as e:
         logger.error(f"Failed to generate autopilot reply: {e}", exc_info=True)
         if custom_instruction:
             return f"Hey, I'm {custom_instruction.lower()} right now! Will get back to you shortly."
         return "Hey! Tied up with something right now, will text you back in a bit."
+
 
