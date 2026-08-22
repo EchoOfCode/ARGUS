@@ -178,7 +178,7 @@ def extract_event(
             {"role": "user", "content": user_prompt},
         ],
         model=_get_model(),
-        max_tokens=256,
+        max_tokens=1024,
         temperature=0.1,
     )
 
@@ -387,7 +387,7 @@ def classify_and_tag_memory(fact: str) -> Tuple[str, List[str]]:
                 {"role": "user", "content": f"Fact: {fact}"},
             ],
             model=_get_model(),
-            max_tokens=150,
+            max_tokens=800,
             temperature=0.1,
         )
         raw = completion.choices[0].message.content or "{}"
@@ -504,7 +504,7 @@ RULES:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.6,
-            max_tokens=180,
+            max_tokens=800,
         )
         raw = response.choices[0].message.content or ""
         cleaned = raw.strip()

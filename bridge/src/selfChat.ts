@@ -427,16 +427,15 @@ export async function handleSelfChatMessage(
   }
 
   if (
-    /^(schedule|add|create|book|new)\s+(an?\s+)?(event|meeting|call|session|appointment)s?\b/i.test(normalized) ||
-    normalized.startsWith("schedule ") ||
+    /^(schedule|shedule|scheldule|sked|add|create|book|new)\s+(an?\s+)?(event|meeting|call|session|appointment)s?\b/i.test(normalized) ||
+    /^(schedule|shedule|scheldule)\b/i.test(normalized) ||
     normalized.startsWith("add event ") ||
     normalized.startsWith("add a event ") ||
     normalized.startsWith("add an event ") ||
     normalized.startsWith("create event ") ||
     normalized.startsWith("create an event ")
   ) {
-    const raw = text.replace(/^(schedule|add|create|book|new)\s+(an?\s+)?(event|meeting|call|session|appointment)s?\s*(for|on|at|:)?\s*/i, "").trim();
-    await handleScheduleEvent(sock, chatJid, raw.length > 0 ? raw : text, config);
+    await handleScheduleEvent(sock, chatJid, text, config);
     return;
   }
 

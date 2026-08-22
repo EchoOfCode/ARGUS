@@ -135,7 +135,7 @@ def classify_intent_llm(message_text: str, is_self_chat: bool, timestamp: str) -
             {"role": "user", "content": user_prompt},
         ],
         model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        max_tokens=256,
+        max_tokens=1024,
         temperature=0.1,
     )
 
