@@ -2,38 +2,68 @@
 ARGUS AI Brain — FastAPI server for all AI capabilities.
 
 Endpoints:
-  POST /process-message  — Intent classification
-  POST /extract-event    — Calendar event extraction
-  POST /parse-reminder   — Natural language reminder parsing
-  POST /summarize        — Conversation summarization
-  POST /ask              — General Q&A
-  GET  /health           — Health check
-
-Usage:
-    uvicorn main:app --host <tailscale-ip> --port 8000 --reload
+  POST /process-message    — Intent classification & smart routing
+  POST /extract-event      — Calendar event extraction
+  POST /parse-reminder     — Natural language reminder parsing
+  POST /summarize          — Conversation & chat catchup summarization
+  POST /ask                — General Q&A with live web search & memory integration
+  POST /emails/unread      — Direct IMAP unread email retrieval
+  POST /emails/summarize   — AI executive summary of email
+  POST /emails/search      — Direct IMAP email search
+  POST /memory/save        — Save facts to long-term memory ("Second Brain")
+  POST /memory/recall      — Query facts from memory
+  POST /search             — Real-time DuckDuckGo web search
+  POST /briefing           — Generate complete daily executive briefing
+  POST /transcribe-audio   — Groq Whisper audio / voice note transcription
+  GET  /health             — Health check
 """
 
 import logging
 import os
+from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 
-from groq_client import extract_event, summarize_messages, answer_question
+from audio_transcriber import transcribe_audio_bytes
+from email_reader import email_reader
+from groq_client import (
+    answer_question,
+    extract_event,
+    generate_briefing,
+    summarize_email,
+    summarize_messages,
+)
 from intent_classifier import classify_intent
-from reminder_parser import parse_reminder
+from memory import recall_memories, save_memory
 from models import (
+    AskRequest,
+    AskResponse,
+    BriefingRequest,
+    BriefingResponse,
+    EmailItem,
+    EmailListResponse,
+    EmailSearchRequest,
+    EmailSummaryRequest,
+    EmailSummaryResponse,
     ExtractRequest,
     ExtractResponse,
+    MemoryRecallRequest,
+    MemoryRecallResponse,
+    MemorySaveRequest,
+    MemorySaveResponse,
     ProcessMessageRequest,
     ProcessMessageResponse,
     ReminderRequest,
     ReminderResponse,
     SummarizeRequest,
     SummarizeResponse,
-    AskRequest,
-    AskResponse,
+    TranscribeAudioResponse,
+    WebSearchRequest,
+    WebSearchResponse,
 )
+from reminder_parser import parse_reminder
+from web_search import search_web
 
 # Load .env before anything else
 load_dotenv()
@@ -47,17 +77,14 @@ logger = logging.getLogger("argus.api")
 
 app = FastAPI(
     title="ARGUS AI Brain",
-    description="Multi-capability AI backend: intent classification, event extraction, reminders, Q&A, summarization",
-    version="2.0.0",
+    description="Multi-capability executive AI assistant backend",
+    version="2.1.0",
 )
 
-# Load the shared secret once at startup
+# Load shared secret
 ARGUS_SECRET = os.getenv("ARGUS_SECRET", "")
 if not ARGUS_SECRET:
-    logger.warning(
-        "ARGUS_SECRET is not set! All requests will be rejected with 401. "
-        "Set it in your .env file."
-    )
+    logger.warning("ARGUS_SECRET is not set! Set it in your .env file.")
 
 
 def verify_secret(x_argus_secret: str | None) -> None:
@@ -70,28 +97,19 @@ def verify_secret(x_argus_secret: str | None) -> None:
 
 # ─── Intent Classification ──────────────────────────────────────
 
-@app.post(
-    "/process-message",
-    response_model=ProcessMessageResponse,
-    responses={401: {}, 502: {}},
-)
+@app.post("/process-message", response_model=ProcessMessageResponse)
 async def process_message_endpoint(
     request: ProcessMessageRequest,
     x_argus_secret: str | None = Header(None),
 ) -> ProcessMessageResponse:
-    """
-    Classify the intent of a WhatsApp message.
-
-    Returns the detected intent (event, reminder, todo, question, summarize, none)
-    along with intent-specific extracted data.
-    """
+    """Classify the intent of a WhatsApp message."""
     verify_secret(x_argus_secret)
 
     logger.info(
-        "Intent classification — chat=%s, self_chat=%s, text=%s",
+        "Intent check — chat=%s, self=%s, text=%s",
         request.chat_jid,
         request.is_self_chat,
-        request.message_text[:80],
+        request.message_text[:60],
     )
 
     try:
@@ -101,7 +119,7 @@ async def process_message_endpoint(
             timestamp=request.timestamp,
         )
 
-        # If intent is "event", do a full extraction in one shot
+        # If intent is "event" and should_respond, extract event details
         if result.get("intent") == "event" and result.get("should_respond", False):
             try:
                 event_data = extract_event(
@@ -118,7 +136,6 @@ async def process_message_endpoint(
                     }
             except Exception as e:
                 logger.error("Event extraction failed during intent processing: %s", e)
-                # Keep the intent result, just without extract_data
 
         return ProcessMessageResponse(**result)
 
@@ -129,150 +146,296 @@ async def process_message_endpoint(
 
 # ─── Event Extraction ───────────────────────────────────────────
 
-@app.post(
-    "/extract-event",
-    response_model=ExtractResponse,
-    responses={401: {}, 422: {}, 502: {}},
-)
+@app.post("/extract-event", response_model=ExtractResponse)
 async def extract_event_endpoint(
     request: ExtractRequest,
     x_argus_secret: str | None = Header(None),
 ) -> ExtractResponse:
-    """Extract a calendar event from notification/message text using Groq LLM."""
+    """Extract a calendar event from message text using Groq LLM."""
     verify_secret(x_argus_secret)
 
-    logger.info(
-        "Extraction request — source=%s, text=%s",
-        request.source_app,
-        request.notification_text[:80],
-    )
-
     try:
-        result = extract_event(
+        return extract_event(
             notification_text=request.notification_text,
             received_at=request.received_at,
             source_app=request.source_app,
         )
-    except ValueError as e:
-        logger.error("Groq parse error: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
-        logger.error("Groq API error: %s", e)
-        raise HTTPException(status_code=502, detail=f"Groq API call failed: {e}")
-
-    logger.info(
-        "Extraction result — is_event=%s, title=%s, confidence=%s",
-        result.is_event,
-        result.title,
-        result.confidence,
-    )
-
-    return result
+        logger.error("Extraction failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # ─── Reminder Parsing ───────────────────────────────────────────
 
-@app.post(
-    "/parse-reminder",
-    response_model=ReminderResponse,
-    responses={401: {}, 502: {}},
-)
+@app.post("/parse-reminder", response_model=ReminderResponse)
 async def parse_reminder_endpoint(
     request: ReminderRequest,
     x_argus_secret: str | None = Header(None),
 ) -> ReminderResponse:
-    """Parse a natural language reminder into structured datetime + text."""
+    """Parse natural language reminder times."""
     verify_secret(x_argus_secret)
 
-    logger.info("Reminder parse — text=%s", request.message_text[:80])
-
     try:
-        result = parse_reminder(
-            message_text=request.message_text,
+        parsed = parse_reminder(
+            text=request.message_text,
             reference_timestamp=request.reference_timestamp,
         )
-        return ReminderResponse(**result)
+        return ReminderResponse(**parsed)
     except ValueError as e:
-        logger.error("Reminder parse error: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        logger.error("Reminder parse error: %s", e)
-        raise HTTPException(status_code=502, detail=f"Groq API call failed: {e}")
+        logger.error("Reminder parsing failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # ─── Summarization ──────────────────────────────────────────────
 
-@app.post(
-    "/summarize",
-    response_model=SummarizeResponse,
-    responses={401: {}, 502: {}},
-)
+@app.post("/summarize", response_model=SummarizeResponse)
 async def summarize_endpoint(
     request: SummarizeRequest,
     x_argus_secret: str | None = Header(None),
 ) -> SummarizeResponse:
-    """Summarize a list of chat messages."""
+    """Summarize a conversation thread or group chat."""
     verify_secret(x_argus_secret)
-
-    logger.info("Summarize — %d messages", len(request.messages))
 
     try:
         messages_dicts = [m.model_dump() for m in request.messages]
         summary = summarize_messages(messages_dicts, request.instruction)
         return SummarizeResponse(summary=summary)
     except Exception as e:
-        logger.error("Summarization error: %s", e)
-        raise HTTPException(status_code=502, detail=f"Summarization failed: {e}")
+        logger.error("Summarization failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
 
 
-# ─── Q&A ────────────────────────────────────────────────────────
+# ─── Q&A with Memory & Web Search ───────────────────────────────
 
-@app.post(
-    "/ask",
-    response_model=AskResponse,
-    responses={401: {}, 502: {}},
-)
+@app.post("/ask", response_model=AskResponse)
 async def ask_endpoint(
     request: AskRequest,
     x_argus_secret: str | None = Header(None),
 ) -> AskResponse:
-    """Answer a general question using Groq LLM."""
+    """Answer questions using Groq with optional memory and web search."""
     verify_secret(x_argus_secret)
 
-    logger.info("Q&A — question=%s", request.question[:80])
+    try:
+        # Check memory context
+        memories = recall_memories(request.question, limit=3)
+        memory_context = "\n".join([f"- {m['fact_text']}" for m in memories]) if memories else None
+
+        # Check live web search if requested or if memory didn't answer
+        web_context = None
+        sources = None
+        if request.use_web_search:
+            search_results = search_web(request.question, max_results=3)
+            if search_results:
+                web_context = "\n\n".join([f"[{r['title']}]: {r['body']}" for r in search_results])
+                sources = [{"title": r["title"], "url": r["href"]} for r in search_results]
+
+        answer = answer_question(
+            question=request.question,
+            memory_context=memory_context,
+            web_context=web_context,
+        )
+        return AskResponse(answer=answer, sources=sources)
+    except Exception as e:
+        logger.error("Ask failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ─── Direct Email Integration ───────────────────────────────────
+
+@app.post("/emails/unread", response_model=EmailListResponse)
+async def get_unread_emails_endpoint(
+    x_argus_secret: str | None = Header(None),
+) -> EmailListResponse:
+    """Fetch unread emails directly via IMAP."""
+    verify_secret(x_argus_secret)
+
+    if not email_reader.is_configured():
+        return EmailListResponse(
+            emails=[],
+            count=0,
+            is_configured=False,
+            message="Email integration is not configured. Set EMAIL_USER and EMAIL_PASS in backend/.env.",
+        )
 
     try:
-        answer = answer_question(request.question)
-        return AskResponse(answer=answer)
+        raw_emails = email_reader.fetch_unread(limit=5)
+        email_items = [EmailItem(**e) for e in raw_emails]
+        return EmailListResponse(emails=email_items, count=len(email_items), is_configured=True)
     except Exception as e:
-        logger.error("Q&A error: %s", e)
-        raise HTTPException(status_code=502, detail=f"Q&A failed: {e}")
+        logger.error("Fetching unread emails failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"Failed to fetch emails: {e}")
+
+
+@app.post("/emails/summarize", response_model=EmailSummaryResponse)
+async def summarize_email_endpoint(
+    request: EmailSummaryRequest,
+    x_argus_secret: str | None = Header(None),
+) -> EmailSummaryResponse:
+    """Summarize a specific email."""
+    verify_secret(x_argus_secret)
+
+    subject = request.subject or "Email"
+    sender = request.sender or "Unknown"
+    date = request.date or ""
+    body = request.body or ""
+
+    if request.email_id and not body:
+        if email_reader.is_configured():
+            email_data = email_reader.get_email_by_id(request.email_id)
+            if email_data:
+                subject = email_data["subject"]
+                sender = email_data["sender"]
+                date = email_data["date"]
+                body = email_data["body"]
+
+    if not body:
+        raise HTTPException(status_code=400, detail="Email body or valid email_id required.")
+
+    summary = summarize_email(subject, sender, date, body)
+    return EmailSummaryResponse(email_id=request.email_id, subject=subject, summary=summary)
+
+
+@app.post("/emails/search", response_model=EmailListResponse)
+async def search_emails_endpoint(
+    request: EmailSearchRequest,
+    x_argus_secret: str | None = Header(None),
+) -> EmailListResponse:
+    """Search inbox directly via IMAP."""
+    verify_secret(x_argus_secret)
+
+    if not email_reader.is_configured():
+        return EmailListResponse(
+            emails=[],
+            count=0,
+            is_configured=False,
+            message="Email integration is not configured.",
+        )
+
+    try:
+        raw_emails = email_reader.search_emails(request.query, limit=request.limit)
+        email_items = [EmailItem(**e) for e in raw_emails]
+        return EmailListResponse(emails=email_items, count=len(email_items), is_configured=True)
+    except Exception as e:
+        logger.error("Searching emails failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ─── Long-Term Memory ("Second Brain") ──────────────────────────
+
+@app.post("/memory/save", response_model=MemorySaveResponse)
+async def save_memory_endpoint(
+    request: MemorySaveRequest,
+    x_argus_secret: str | None = Header(None),
+) -> MemorySaveResponse:
+    """Store a fact in long-term memory."""
+    verify_secret(x_argus_secret)
+
+    saved = save_memory(request.fact, request.category)
+    return MemorySaveResponse(
+        id=saved["id"],
+        fact=saved["fact_text"],
+        category=saved["category"],
+        message="Stored in memory.",
+    )
+
+
+@app.post("/memory/recall", response_model=MemoryRecallResponse)
+async def recall_memory_endpoint(
+    request: MemoryRecallRequest,
+    x_argus_secret: str | None = Header(None),
+) -> MemoryRecallResponse:
+    """Recall facts from long-term memory."""
+    verify_secret(x_argus_secret)
+
+    results = recall_memories(request.query, limit=request.limit)
+    answer = None
+    if results:
+        mem_text = "\n".join([f"- {r['fact_text']}" for r in results])
+        answer = answer_question(request.query, memory_context=mem_text)
+
+    return MemoryRecallResponse(memories=results, answer=answer)
+
+
+# ─── Live Web Search ────────────────────────────────────────────
+
+@app.post("/search", response_model=WebSearchResponse)
+async def web_search_endpoint(
+    request: WebSearchRequest,
+    x_argus_secret: str | None = Header(None),
+) -> WebSearchResponse:
+    """Perform real-time web search."""
+    verify_secret(x_argus_secret)
+
+    results = search_web(request.query, max_results=request.limit)
+    return WebSearchResponse(query=request.query, results=results)
+
+
+# ─── Daily Executive Briefing ───────────────────────────────────
+
+@app.post("/briefing", response_model=BriefingResponse)
+async def briefing_endpoint(
+    request: BriefingRequest,
+    x_argus_secret: str | None = Header(None),
+) -> BriefingResponse:
+    """Generate daily morning briefing."""
+    verify_secret(x_argus_secret)
+
+    emails = []
+    if request.include_emails and email_reader.is_configured():
+        try:
+            emails = email_reader.fetch_unread(limit=3)
+        except Exception as e:
+            logger.warning("Could not fetch emails for briefing: %s", e)
+
+    briefing_text = generate_briefing(
+        todos=request.todos,
+        reminders=request.reminders,
+        events=request.events,
+        emails=emails,
+    )
+    return BriefingResponse(briefing_text=briefing_text)
+
+
+# ─── Audio / Voice Note Transcription (Groq Whisper) ────────────
+
+@app.post("/transcribe-audio", response_model=TranscribeAudioResponse)
+async def transcribe_audio_endpoint(
+    file: UploadFile = File(...),
+    x_argus_secret: str | None = Header(None),
+) -> TranscribeAudioResponse:
+    """Transcribe uploaded audio file using Groq Whisper-large-v3."""
+    verify_secret(x_argus_secret)
+
+    try:
+        content = await file.read()
+        transcription = transcribe_audio_bytes(content, filename=file.filename or "audio.ogg")
+        return TranscribeAudioResponse(transcription=transcription, success=True)
+    except Exception as e:
+        logger.error("Audio transcription failed: %s", e)
+        return TranscribeAudioResponse(transcription="", success=False, error=str(e))
 
 
 # ─── Health Check ───────────────────────────────────────────────
 
 @app.get("/health")
-async def health_check():
-    """Simple health check endpoint."""
+async def health_check() -> dict:
+    """Health check endpoint."""
     return {
         "status": "ok",
         "service": "argus-brain",
-        "version": "2.0.0",
-        "endpoints": [
-            "/process-message",
-            "/extract-event",
-            "/parse-reminder",
-            "/summarize",
-            "/ask",
+        "version": "2.1.0",
+        "email_configured": email_reader.is_configured(),
+        "capabilities": [
+            "intent-routing",
+            "event-extraction",
+            "reminders",
+            "whisper-voice-notes",
+            "email-reading",
+            "memory-second-brain",
+            "web-search",
+            "executive-briefing",
+            "summarization",
         ],
     }
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    host = os.getenv("ARGUS_HOST", "127.0.0.1")
-    port = int(os.getenv("ARGUS_PORT", "8000"))
-
-    logger.info("Starting ARGUS AI Brain on %s:%d", host, port)
-    uvicorn.run(app, host=host, port=port)

@@ -17,6 +17,9 @@ export interface Config {
   sendDelayMs: number;
   authDir: string;
   dbPath: string;
+  briefingHour: number;
+  briefingMinute: number;
+  enableDailyBriefing: boolean;
 }
 
 function requireEnv(key: string): string {
@@ -38,6 +41,9 @@ export function loadConfig(): Config {
   const sendDelayMs = parseInt(process.env.SEND_DELAY_MS || "1500", 10);
   const authDir = path.resolve(__dirname, "../auth_info");
   const dbPath = path.resolve(__dirname, "../argus.db");
+  const briefingHour = parseInt(process.env.BRIEFING_HOUR || "8", 10);
+  const briefingMinute = parseInt(process.env.BRIEFING_MINUTE || "0", 10);
+  const enableDailyBriefing = process.env.ENABLE_DAILY_BRIEFING !== "false";
 
   return {
     myJid,
@@ -48,5 +54,8 @@ export function loadConfig(): Config {
     sendDelayMs,
     authDir,
     dbPath,
+    briefingHour,
+    briefingMinute,
+    enableDailyBriefing,
   };
 }

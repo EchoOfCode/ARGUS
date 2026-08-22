@@ -1,10 +1,10 @@
 """Pydantic models for the ARGUS AI Brain API."""
 
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
-from typing import Optional, List, Literal
 
 
-# ─── Event Extraction (original) ────────────────────────────────
+# ─── Event Extraction ───────────────────────────────────────────
 
 class ExtractRequest(BaseModel):
     """Request body for POST /extract-event."""
@@ -37,7 +37,7 @@ class ExtractResponse(BaseModel):
     raw_text: Optional[str] = None
 
 
-# ─── Intent Classification (new) ────────────────────────────────
+# ─── Intent Classification ──────────────────────────────────────
 
 class ProcessMessageRequest(BaseModel):
     """Request body for POST /process-message."""
@@ -54,7 +54,7 @@ class ProcessMessageResponse(BaseModel):
 
     intent: str = Field(
         ...,
-        description="Detected intent: event, reminder, todo, question, summarize, none",
+        description="Detected intent: event, reminder, todo, question, summarize, email_list, email_summary, email_search, catchup, memory_save, memory_recall, search, briefing, none",
     )
     confidence: float = Field(..., ge=0.0, le=1.0)
     should_respond: bool = Field(..., description="Whether ARGUS should respond to this message")
@@ -64,7 +64,7 @@ class ProcessMessageResponse(BaseModel):
     )
 
 
-# ─── Reminder Parsing (new) ─────────────────────────────────────
+# ─── Reminder Parsing ───────────────────────────────────────────
 
 class ReminderRequest(BaseModel):
     """Request body for POST /parse-reminder."""
@@ -83,13 +83,14 @@ class ReminderResponse(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0)
 
 
-# ─── Summarize (new) ────────────────────────────────────────────
+# ─── Summarize ──────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
     """A single message in a conversation."""
 
-    sender: str
-    text: str
+    sender_name: Optional[str] = None
+    sender_jid: Optional[str] = None
+    message_text: str
     timestamp: str
 
 
@@ -109,43 +110,139 @@ class SummarizeResponse(BaseModel):
     summary: str
 
 
-# ─── Ask (Q&A) (new) ────────────────────────────────────────────
+# ─── Ask (Q&A) ──────────────────────────────────────────────────
 
 class AskRequest(BaseModel):
     """Request body for POST /ask."""
 
     question: str = Field(..., description="The question to answer")
+    use_web_search: bool = Field(False, description="Whether to include live web search results")
 
 
 class AskResponse(BaseModel):
     """Response body for POST /ask."""
 
     answer: str
+    sources: Optional[List[Dict[str, str]]] = None
 
 
-# ─── Todo (new) ─────────────────────────────────────────────────
+# ─── Email Models ───────────────────────────────────────────────
 
-class TodoRequest(BaseModel):
-    """Request body for POST /todo."""
+class EmailItem(BaseModel):
+    """Representation of an email."""
 
-    action: Literal["add", "list", "complete", "delete"] = Field(
-        ..., description="The action to perform"
-    )
-    text: Optional[str] = Field(None, description="Todo text (for add)")
-    todo_id: Optional[int] = Field(None, description="Todo ID (for complete/delete)")
+    id: str
+    subject: str
+    sender: str
+    date: str
+    snippet: str
+    body: Optional[str] = None
 
 
-class TodoItem(BaseModel):
-    """A single todo item."""
+class EmailListResponse(BaseModel):
+    """Response for listing unread/searched emails."""
+
+    emails: List[EmailItem]
+    count: int
+    is_configured: bool = True
+    message: Optional[str] = None
+
+
+class EmailSummaryRequest(BaseModel):
+    """Request body to summarize an email."""
+
+    email_id: Optional[str] = None
+    subject: Optional[str] = None
+    sender: Optional[str] = None
+    date: Optional[str] = None
+    body: Optional[str] = None
+
+
+class EmailSummaryResponse(BaseModel):
+    """Response body for email summary."""
+
+    email_id: Optional[str] = None
+    subject: str
+    summary: str
+
+
+class EmailSearchRequest(BaseModel):
+    """Request body to search emails."""
+
+    query: str
+    limit: int = 5
+
+
+# ─── Memory Models ("Second Brain") ─────────────────────────────
+
+class MemorySaveRequest(BaseModel):
+    """Request to save a memory fact."""
+
+    fact: str
+    category: str = "general"
+
+
+class MemorySaveResponse(BaseModel):
+    """Response for memory save."""
 
     id: int
-    text: str
-    completed: bool
-    created_at: str
-
-
-class TodoResponse(BaseModel):
-    """Response body for POST /todo."""
-
-    todos: List[TodoItem] = []
+    fact: str
+    category: str
     message: str
+
+
+class MemoryRecallRequest(BaseModel):
+    """Request to search memory."""
+
+    query: str
+    limit: int = 5
+
+
+class MemoryRecallResponse(BaseModel):
+    """Response for memory query."""
+
+    memories: List[Dict[str, Any]]
+    answer: Optional[str] = None
+
+
+# ─── Web Search ─────────────────────────────────────────────────
+
+class WebSearchRequest(BaseModel):
+    """Request body for web search."""
+
+    query: str
+    limit: int = 5
+
+
+class WebSearchResponse(BaseModel):
+    """Response body for web search."""
+
+    query: str
+    results: List[Dict[str, Any]]
+
+
+# ─── Daily Briefing ─────────────────────────────────────────────
+
+class BriefingRequest(BaseModel):
+    """Request to compile a daily briefing."""
+
+    todos: List[Dict[str, Any]] = []
+    reminders: List[Dict[str, Any]] = []
+    events: List[Dict[str, Any]] = []
+    include_emails: bool = True
+
+
+class BriefingResponse(BaseModel):
+    """Response for daily briefing."""
+
+    briefing_text: str
+
+
+# ─── Audio / Voice Note Transcription ───────────────────────────
+
+class TranscribeAudioResponse(BaseModel):
+    """Response from Groq Whisper audio transcription."""
+
+    transcription: str
+    success: bool
+    error: Optional[str] = None

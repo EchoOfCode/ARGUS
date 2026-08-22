@@ -4,13 +4,6 @@ import { Config } from "./config.js";
 
 const logger = pino({ name: "argus:reply" });
 
-/**
- * Rate-limited WhatsApp message sender.
- *
- * Enforces a minimum delay between sends to avoid WhatsApp detection.
- * All outgoing messages should go through this module.
- */
-
 let lastSendTime = 0;
 
 function sleep(ms: number): Promise<void> {
@@ -41,9 +34,6 @@ async function rateLimitedSend(
   }
 }
 
-/**
- * Send a plain text message.
- */
 export async function sendText(
   sock: WASocket,
   jid: string,
@@ -53,9 +43,6 @@ export async function sendText(
   await rateLimitedSend(sock, jid, { text }, config);
 }
 
-/**
- * Send an event confirmation prompt.
- */
 export async function sendEventConfirmation(
   sock: WASocket,
   jid: string,
@@ -84,9 +71,6 @@ export async function sendEventConfirmation(
   await sendText(sock, jid, message, config);
 }
 
-/**
- * Send a reminder notification.
- */
 export async function sendReminder(
   sock: WASocket,
   jid: string,
@@ -97,9 +81,6 @@ export async function sendReminder(
   await sendText(sock, jid, message, config);
 }
 
-/**
- * Send confirmation that an event was added.
- */
 export async function sendEventAdded(
   sock: WASocket,
   jid: string,
@@ -113,9 +94,6 @@ export async function sendEventAdded(
   await sendText(sock, jid, message, config);
 }
 
-/**
- * Send a reminder confirmation.
- */
 export async function sendReminderSet(
   sock: WASocket,
   jid: string,
@@ -127,9 +105,6 @@ export async function sendReminderSet(
   await sendText(sock, jid, message, config);
 }
 
-/**
- * Send a todo list.
- */
 export async function sendTodoList(
   sock: WASocket,
   jid: string,
@@ -150,9 +125,82 @@ export async function sendTodoList(
   await sendText(sock, jid, message, config);
 }
 
-/**
- * Send an error message.
- */
+export async function sendEmailList(
+  sock: WASocket,
+  jid: string,
+  emails: Array<{ id: string; subject: string; sender: string; date: string; snippet: string }>,
+  config: Config,
+  header = "📬 *Unread Emails:*"
+): Promise<void> {
+  if (emails.length === 0) {
+    await sendText(sock, jid, "📭 Your inbox has no unread emails.", config);
+    return;
+  }
+
+  const lines = emails.map((e, idx) => {
+    return [
+      `✉️ *#${idx + 1}* — *${e.subject}*`,
+      `   👤 From: ${e.sender}`,
+      `   💬 _${e.snippet}_`,
+    ].join("\n");
+  });
+
+  const message = `${header}\n\n${lines.join("\n\n")}\n\n_Tip: Type "summarize email #1" for a full breakdown._`;
+  await sendText(sock, jid, message, config);
+}
+
+export async function sendEmailSummary(
+  sock: WASocket,
+  jid: string,
+  subject: string,
+  summary: string,
+  config: Config
+): Promise<void> {
+  const message = `📧 *Email Summary:* *${subject}*\n\n${summary}`;
+  await sendText(sock, jid, message, config);
+}
+
+export async function sendCatchupSummary(
+  sock: WASocket,
+  jid: string,
+  chatName: string,
+  summary: string,
+  config: Config
+): Promise<void> {
+  const message = `💬 *Catch-up: ${chatName}*\n\n${summary}`;
+  await sendText(sock, jid, message, config);
+}
+
+export async function sendMemoryResponse(
+  sock: WASocket,
+  jid: string,
+  text: string,
+  config: Config
+): Promise<void> {
+  const message = `🧠 *ARGUS Memory:*\n\n${text}`;
+  await sendText(sock, jid, message, config);
+}
+
+export async function sendSearchResults(
+  sock: WASocket,
+  jid: string,
+  query: string,
+  results: Array<{ title: string; href: string; body: string }>,
+  config: Config
+): Promise<void> {
+  if (results.length === 0) {
+    await sendText(sock, jid, `🌐 No live web results found for "${query}".`, config);
+    return;
+  }
+
+  const lines = results.map((r, i) => {
+    return `*${i + 1}. ${r.title}*\n${r.body}\n🔗 ${r.href}`;
+  });
+
+  const message = `🌐 *Web Search Results for "${query}":*\n\n${lines.join("\n\n")}`;
+  await sendText(sock, jid, message, config);
+}
+
 export async function sendError(
   sock: WASocket,
   jid: string,
@@ -162,8 +210,6 @@ export async function sendError(
   const message = `⚠️ ${errorText}`;
   await sendText(sock, jid, message, config);
 }
-
-// ─── Formatting helpers ────────────────────────────────────────
 
 function formatDate(dateStr: string): string {
   try {

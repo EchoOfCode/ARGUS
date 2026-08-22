@@ -33,6 +33,7 @@ export function initDatabase(dbPath: string): Database.Database {
     CREATE TABLE IF NOT EXISTS message_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       chat_jid TEXT NOT NULL,
+      chat_name TEXT,
       sender_jid TEXT NOT NULL,
       sender_name TEXT,
       message_text TEXT NOT NULL,
@@ -55,11 +56,26 @@ export function initDatabase(dbPath: string): Database.Database {
       confirmed_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS chat_directory (
+      jid TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      is_group INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_at, status);
     CREATE INDEX IF NOT EXISTS idx_todos_chat ON todos(chat_jid, completed);
     CREATE INDEX IF NOT EXISTS idx_messages_chat ON message_log(chat_jid, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_messages_text ON message_log(message_text);
     CREATE INDEX IF NOT EXISTS idx_pending_events_status ON pending_events(status);
   `);
+
+  // Run migrations safely for new columns if table existed
+  try {
+    db.exec("ALTER TABLE message_log ADD COLUMN chat_name TEXT;");
+  } catch {
+    // Column already exists
+  }
 
   return db;
 }
@@ -99,6 +115,14 @@ export function getDueReminders(): Reminder[] {
       "SELECT * FROM reminders WHERE status = 'pending' AND due_at <= datetime('now')"
     )
     .all() as Reminder[];
+}
+
+export function getTodayReminders(chatJid: string): Reminder[] {
+  return getDb()
+    .prepare(
+      "SELECT * FROM reminders WHERE chat_jid = ? AND status = 'pending' AND date(due_at) = date('now') ORDER BY due_at ASC"
+    )
+    .all(chatJid) as Reminder[];
 }
 
 export function markReminderSent(id: number): void {
@@ -153,49 +177,103 @@ export function completeTodo(id: number): boolean {
 }
 
 export function deleteTodo(id: number): boolean {
-  const result = getDb().prepare("DELETE FROM todos WHERE id = ?").run(id);
+  const result = getDb()
+    .prepare("DELETE FROM todos WHERE id = ?")
+    .run(id);
   return result.changes > 0;
 }
 
-// ─── Message log operations ───────────────────────────────────
+// ─── Message logging & search ──────────────────────────────────
+
+export interface LoggedMessage {
+  id: number;
+  chat_jid: string;
+  chat_name: string | null;
+  sender_jid: string;
+  sender_name: string | null;
+  message_text: string;
+  timestamp: string;
+  is_from_me: number;
+}
 
 export function logMessage(
   chatJid: string,
+  chatName: string | null,
   senderJid: string,
   senderName: string | null,
-  text: string,
+  messageText: string,
   timestamp: string,
   isFromMe: boolean
 ): void {
   getDb()
     .prepare(
-      `INSERT INTO message_log (chat_jid, sender_jid, sender_name, message_text, timestamp, is_from_me)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO message_log (chat_jid, chat_name, sender_jid, sender_name, message_text, timestamp, is_from_me)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(chatJid, senderJid, senderName, text, timestamp, isFromMe ? 1 : 0);
+    .run(chatJid, chatName, senderJid, senderName, messageText, timestamp, isFromMe ? 1 : 0);
+
+  // Update chat directory
+  if (chatName) {
+    getDb()
+      .prepare(
+        `INSERT INTO chat_directory (jid, name, is_group, updated_at)
+         VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(jid) DO UPDATE SET name = excluded.name, updated_at = datetime('now')`
+      )
+      .run(chatJid, chatName, chatJid.endsWith("@g.us") ? 1 : 0);
+  }
 }
 
-export function getRecentMessages(
-  chatJid: string,
-  limit = 50
-): Array<{
-  sender_name: string | null;
-  message_text: string;
-  timestamp: string;
-  is_from_me: number;
-}> {
+export function getRecentMessages(chatJid: string, limit = 30): LoggedMessage[] {
   return getDb()
     .prepare(
-      `SELECT sender_name, message_text, timestamp, is_from_me
-       FROM message_log
+      `SELECT * FROM message_log
        WHERE chat_jid = ?
        ORDER BY timestamp DESC
        LIMIT ?`
     )
-    .all(chatJid, limit) as any[];
+    .all(chatJid, limit)
+    .reverse() as LoggedMessage[];
 }
 
-// ─── Pending event operations ──────────────────────────────────
+export function findChatByNameOrQuery(query: string): { jid: string; name: string } | null {
+  const q = query.trim().toLowerCase();
+  const match = getDb()
+    .prepare(
+      `SELECT jid, name FROM chat_directory
+       WHERE LOWER(name) LIKE ? OR LOWER(jid) LIKE ?
+       ORDER BY updated_at DESC
+       LIMIT 1`
+    )
+    .get(`%${q}%`, `%${q}%`) as { jid: string; name: string } | undefined;
+
+  if (match) return match;
+
+  // Fallback: search in message_log chat_name
+  const logMatch = getDb()
+    .prepare(
+      `SELECT chat_jid as jid, chat_name as name FROM message_log
+       WHERE LOWER(chat_name) LIKE ?
+       ORDER BY timestamp DESC
+       LIMIT 1`
+    )
+    .get(`%${q}%`) as { jid: string; name: string } | undefined;
+
+  return logMatch || null;
+}
+
+export function searchMessages(query: string, limit = 10): LoggedMessage[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM message_log
+       WHERE LOWER(message_text) LIKE ?
+       ORDER BY timestamp DESC
+       LIMIT ?`
+    )
+    .all(`%${query.toLowerCase()}%`, limit) as LoggedMessage[];
+}
+
+// ─── Pending events ────────────────────────────────────────────
 
 export interface PendingEvent {
   id: number;
@@ -215,35 +293,51 @@ export function addPendingEvent(
   chatJid: string,
   senderJid: string,
   originalText: string,
-  title: string | null,
-  eventDate: string | null,
-  eventTime: string | null,
-  confidence: number | null
+  title?: string | null,
+  eventDate?: string | null,
+  eventTime?: string | null,
+  confidence?: number | null
 ): PendingEvent {
   const stmt = getDb().prepare(
-    `INSERT INTO pending_events (chat_jid, sender_jid, original_text, title, event_date, event_time, confidence)
+    `INSERT INTO pending_events
+     (chat_jid, sender_jid, original_text, title, event_date, event_time, confidence)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
   );
   const result = stmt.run(
     chatJid,
     senderJid,
     originalText,
-    title,
-    eventDate,
-    eventTime,
-    confidence
+    title || null,
+    eventDate || null,
+    eventTime || null,
+    confidence || null
   );
   return getDb()
     .prepare("SELECT * FROM pending_events WHERE id = ?")
     .get(result.lastInsertRowid) as PendingEvent;
 }
 
-export function getLatestPendingEvent(chatJid: string): PendingEvent | undefined {
+export function getLatestPendingEvent(chatJid: string): PendingEvent | null {
+  return (
+    (getDb()
+      .prepare(
+        `SELECT * FROM pending_events
+         WHERE chat_jid = ? AND status = 'pending'
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(chatJid) as PendingEvent | undefined) || null
+  );
+}
+
+export function getTodayConfirmedEvents(): PendingEvent[] {
   return getDb()
     .prepare(
-      "SELECT * FROM pending_events WHERE chat_jid = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1"
+      `SELECT * FROM pending_events
+       WHERE status = 'confirmed' AND (event_date = date('now') OR event_date IS NULL)
+       ORDER BY event_time ASC`
     )
-    .get(chatJid) as PendingEvent | undefined;
+    .all() as PendingEvent[];
 }
 
 export function confirmEvent(id: number): void {
@@ -256,6 +350,8 @@ export function confirmEvent(id: number): void {
 
 export function ignoreEvent(id: number): void {
   getDb()
-    .prepare("UPDATE pending_events SET status = 'ignored' WHERE id = ?")
+    .prepare(
+      "UPDATE pending_events SET status = 'ignored' WHERE id = ?"
+    )
     .run(id);
 }

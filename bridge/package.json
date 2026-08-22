@@ -10,14 +10,15 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
+    "@hapi/boom": "^10.0.0",
     "@whiskeysockets/baileys": "^6.7.22",
     "axios": "^1.7.0",
     "better-sqlite3": "^11.0.0",
+    "dotenv": "^16.4.0",
+    "form-data": "^4.0.6",
     "node-cron": "^3.0.3",
     "pino": "^9.0.0",
-    "qrcode-terminal": "^0.12.0",
-    "dotenv": "^16.4.0",
-    "@hapi/boom": "^10.0.0"
+    "qrcode-terminal": "^0.12.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",

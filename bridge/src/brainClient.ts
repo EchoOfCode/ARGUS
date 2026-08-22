@@ -1,60 +1,84 @@
-import axios, { AxiosError } from "axios";
+import axios from "axios";
+import FormData from "form-data";
 import pino from "pino";
 import { Config } from "./config.js";
 
-const logger = pino({ name: "argus:brain" });
+const logger = pino({ name: "argus:brainClient" });
 
 /**
- * Generic caller for the AI Brain backend.
- * All endpoints require the X-Argus-Secret header.
+ * Call the AI Brain (FastAPI backend) with JSON payload.
  */
 export async function callBrain(
   config: Config,
   endpoint: string,
-  payload: Record<string, any>
+  data: Record<string, unknown>
 ): Promise<any> {
   const url = `${config.aiBrainUrl}${endpoint}`;
 
-  try {
-    logger.info({ url, payload_keys: Object.keys(payload) }, "Calling AI Brain");
+  logger.debug({ url, endpoint }, "Calling AI Brain");
 
-    const response = await axios.post(url, payload, {
+  try {
+    const response = await axios.post(url, data, {
       headers: {
         "Content-Type": "application/json",
         "X-Argus-Secret": config.argusSecret,
       },
-      timeout: 30000, // 30s timeout for LLM calls
+      timeout: 30000,
     });
 
-    logger.info({ url, status: response.status }, "AI Brain response received");
     return response.data;
-  } catch (err) {
-    if (err instanceof AxiosError) {
-      if (err.response) {
-        logger.error(
-          {
-            url,
-            status: err.response.status,
-            data: err.response.data,
-          },
-          "AI Brain returned error"
-        );
-
-        // For 502 (Groq error), return null so caller can handle gracefully
-        if (err.response.status === 502) {
-          return null;
-        }
-
-        throw new Error(
-          `AI Brain error ${err.response.status}: ${JSON.stringify(err.response.data)}`
-        );
-      }
-
-      // Network error — brain is unreachable
-      logger.error({ url, message: err.message }, "AI Brain unreachable");
-      throw new Error(`AI Brain unreachable: ${err.message}`);
+  } catch (err: any) {
+    if (err.response) {
+      logger.error(
+        {
+          status: err.response.status,
+          data: err.response.data,
+          endpoint,
+        },
+        "AI Brain returned an error"
+      );
+    } else {
+      logger.error({ message: err.message, endpoint }, "Failed to connect to AI Brain");
     }
+    throw err;
+  }
+}
 
+/**
+ * Send multipart/form-data to AI Brain (e.g. for audio transcription).
+ */
+export async function callBrainMultipart(
+  config: Config,
+  endpoint: string,
+  formData: FormData
+): Promise<any> {
+  const url = `${config.aiBrainUrl}${endpoint}`;
+
+  logger.debug({ url, endpoint }, "Calling AI Brain (multipart)");
+
+  try {
+    const response = await axios.post(url, formData, {
+      headers: {
+        ...formData.getHeaders(),
+        "X-Argus-Secret": config.argusSecret,
+      },
+      timeout: 30000,
+    });
+
+    return response.data;
+  } catch (err: any) {
+    if (err.response) {
+      logger.error(
+        {
+          status: err.response.status,
+          data: err.response.data,
+          endpoint,
+        },
+        "AI Brain multipart returned an error"
+      );
+    } else {
+      logger.error({ message: err.message, endpoint }, "Failed to connect to AI Brain (multipart)");
+    }
     throw err;
   }
 }
