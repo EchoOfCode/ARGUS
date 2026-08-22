@@ -22,6 +22,7 @@ export interface Config {
   enableDailyBriefing: boolean;
   dedicatedGroupName: string;
   enablePassiveAlerts: boolean;
+  ownerName: string;
 }
 
 function requireEnv(key: string): string {
@@ -48,6 +49,7 @@ export function loadConfig(): Config {
   const enableDailyBriefing = process.env.ENABLE_DAILY_BRIEFING !== "false";
   const dedicatedGroupName = process.env.DEDICATED_GROUP_NAME || "ARGUS";
   const enablePassiveAlerts = process.env.ENABLE_PASSIVE_ALERTS === "true"; // Default false
+  const ownerName = process.env.OWNER_NAME || "User";
 
   return {
     myJid,
@@ -63,5 +65,6 @@ export function loadConfig(): Config {
     enableDailyBriefing,
     dedicatedGroupName,
     enablePassiveAlerts,
+    ownerName,
   };
 }

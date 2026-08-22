@@ -436,6 +436,8 @@ def synthesize_memory_answer(question: str, memories: List[Dict[str, Any]]) -> s
 def generate_autopilot_persona_reply(
     incoming_message: str,
     sender_name: str = "Friend",
+    chat_name: Optional[str] = None,
+    is_group: bool = False,
     recent_history: Optional[List[Dict[str, Any]]] = None,
     personal_memories: Optional[List[Dict[str, Any]]] = None,
     custom_instruction: Optional[str] = None,
@@ -472,7 +474,10 @@ RULES:
     if current_time_str:
         context_parts.append(f"Current Date & Time: {current_time_str}")
 
-    if sender_name:
+    if is_group and chat_name:
+        context_parts.append(f"Location: WhatsApp Group \"{chat_name}\"")
+        context_parts.append(f"Message Sent By Group Member: {sender_name}")
+    elif sender_name:
         context_parts.append(f"Sender Name: {sender_name}")
 
     if custom_instruction:

@@ -278,6 +278,8 @@ class AutopilotReplyRequest(BaseModel):
     """Request to generate an auto-pilot reply acting as the user."""
 
     chat_jid: str
+    chat_name: Optional[str] = None
+    is_group: bool = False
     sender_name: Optional[str] = "Friend"
     incoming_message: str
     recent_chat_history: List[Dict[str, Any]] = []

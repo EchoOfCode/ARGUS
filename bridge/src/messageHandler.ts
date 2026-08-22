@@ -290,68 +290,80 @@ export async function handleMessage(
     return;
   }
 
-  // ─── Check Auto-Pilot Persona Auto-Responder for 1-on-1 DMs ───
-  if (!isGroup && !isFromMe && senderJid) {
-    const autopilotRule = getActiveAutopilotRule(senderJid);
+  // ─── Check Auto-Pilot Persona Auto-Responder (1-on-1 DMs & Groups) ───
+  if (!isFromMe && (senderJid || chatJid)) {
+    const autopilotRule = getActiveAutopilotRule(chatJid, senderJid);
     if (autopilotRule && autopilotRule.status === "active") {
-      console.log(`🤖 [Auto-Pilot] Triggered for ${senderName || senderJid} (${autopilotRule.name})`);
+      // Don't auto-reply to commands or inside the dedicated ARGUS command group
+      if (!isCommandChat) {
+        // If it's a GLOBAL busy mode rule and this is an unmentioned group chat, skip passive group chatter
+        const isSpecificRule = autopilotRule.jid !== "GLOBAL";
+        const isMentioned = text.toLowerCase().includes("@") || text.toLowerCase().includes(config.ownerName?.toLowerCase() || "yusuf");
 
-      try {
-        // 1. Fetch user's real past sent messages to learn genuine typing style
-        const mySentSamples = (getDb()
-          .prepare(
-            "SELECT message_text FROM message_log WHERE is_from_me = 1 AND LENGTH(message_text) BETWEEN 4 AND 80 ORDER BY id DESC LIMIT 5"
-          )
-          .all() as Array<{ message_text: string }>).map((r) => r.message_text);
+        if (isSpecificRule || !isGroup || isMentioned) {
+          console.log(`🤖 [Auto-Pilot] Triggered for [${chatName || chatJid}] from ${senderName || senderJid} (${autopilotRule.name})`);
 
-        // 2. Format current time string (e.g. "Saturday 4:20 PM")
-        const now = new Date();
-        const currentTimeStr = now.toLocaleDateString("en-US", { weekday: "long" }) + " " + now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+          try {
+            // 1. Fetch user's real past sent messages to learn genuine typing style
+            const mySentSamples = (getDb()
+              .prepare(
+                "SELECT message_text FROM message_log WHERE is_from_me = 1 AND LENGTH(message_text) BETWEEN 4 AND 80 ORDER BY id DESC LIMIT 5"
+              )
+              .all() as Array<{ message_text: string }>).map((r) => r.message_text);
 
-        // 3. Simulate human typing presence & natural dynamic typing delay
-        await sock.sendPresenceUpdate("composing", senderJid).catch(() => {});
-        const typingDelayMs = Math.min(4500, Math.max(1800, text.length * 40 + Math.floor(Math.random() * 800)));
-        await new Promise((r) => setTimeout(r, typingDelayMs));
+            // 2. Format current time string (e.g. "Saturday 4:20 PM")
+            const now = new Date();
+            const currentTimeStr = now.toLocaleDateString("en-US", { weekday: "long" }) + " " + now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 
-        // 4. Fetch last 8 messages from this conversation for multi-turn continuity
-        const recentHistory = getDb()
-          .prepare(
-            "SELECT message_text as text, is_from_me, timestamp FROM message_log WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 8"
-          )
-          .all(chatJid) as any[];
-        recentHistory.reverse();
+            // 3. Simulate human typing presence & natural dynamic typing delay
+            await sock.sendPresenceUpdate("composing", chatJid).catch(() => {});
+            const typingDelayMs = Math.min(4500, Math.max(1800, text.length * 40 + Math.floor(Math.random() * 800)));
+            await new Promise((r) => setTimeout(r, typingDelayMs));
 
-        // 5. Generate personalized response acting as the owner
-        const personaRes = await callBrain(config, "/autopilot/generate-reply", {
-          chat_jid: chatJid,
-          sender_name: senderName || autopilotRule.name || "Friend",
-          incoming_message: text,
-          recent_chat_history: recentHistory,
-          custom_instruction: autopilotRule.custom_prompt,
-          current_time_str: currentTimeStr,
-          user_style_samples: mySentSamples,
-        });
+            // 4. Fetch last 8 messages from this conversation for multi-turn continuity
+            const recentHistory = getDb()
+              .prepare(
+                "SELECT message_text as text, is_from_me, timestamp FROM message_log WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 8"
+              )
+              .all(chatJid) as any[];
+            recentHistory.reverse();
 
-        if (personaRes && personaRes.reply_text) {
-          // 6. Send response to sender
-          await sendText(sock, senderJid, personaRes.reply_text, config);
-          incrementAutopilotCount(senderJid);
+            // 5. Generate personalized response acting as the owner
+            const personaRes = await callBrain(config, "/autopilot/generate-reply", {
+              chat_jid: chatJid,
+              chat_name: chatName || undefined,
+              is_group: isGroup,
+              sender_name: senderName || autopilotRule.name || "Friend",
+              incoming_message: text,
+              recent_chat_history: recentHistory,
+              custom_instruction: autopilotRule.custom_prompt,
+              current_time_str: currentTimeStr,
+              user_style_samples: mySentSamples,
+            });
 
-          // 7. Mirror transparent confirmation card back to dedicated ARGUS command group
-          const mirrorMsg = [
-            `🤖 *[Auto-Pilot Active]* Replied to *${senderName || autopilotRule.name}* as you:`,
-            `📩 *Incoming:* "${text}"`,
-            `💬 *Reply Sent:* "${personaRes.reply_text}"`,
-          ].join("\n");
-          await sendText(sock, config.myJid, mirrorMsg, config);
+            if (personaRes && personaRes.reply_text) {
+              // 6. Send response directly to the chat/group
+              await sendText(sock, chatJid, personaRes.reply_text, config);
+              incrementAutopilotCount(autopilotRule.jid);
 
-          console.log(`🚀 [Auto-Pilot] Sent reply to ${senderName || senderJid}: "${personaRes.reply_text}"`);
-          return;
+              // 7. Mirror transparent confirmation card back to dedicated ARGUS command group
+              const targetLabel = isGroup ? `Group *${chatName || chatJid}*` : `*${senderName || autopilotRule.name}*`;
+              const mirrorMsg = [
+                `🤖 *[Auto-Pilot Active]* Replied in ${targetLabel} as you:`,
+                `📩 *Incoming:* "${text}"`,
+                `💬 *Reply Sent:* "${personaRes.reply_text}"`,
+              ].join("\n");
+              await sendText(sock, config.myJid, mirrorMsg, config);
+
+              console.log(`🚀 [Auto-Pilot] Sent reply in ${chatName || chatJid}: "${personaRes.reply_text}"`);
+              return;
+            }
+          } catch (autoErr) {
+            logger.error({ autoErr, chatJid }, "Error in Auto-Pilot persona response");
+          } finally {
+            await sock.sendPresenceUpdate("paused", chatJid).catch(() => {});
+          }
         }
-      } catch (autoErr) {
-        logger.error({ autoErr, senderJid }, "Error in Auto-Pilot persona response");
-      } finally {
-        await sock.sendPresenceUpdate("paused", senderJid).catch(() => {});
       }
     }
   }

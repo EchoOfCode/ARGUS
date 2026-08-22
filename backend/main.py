@@ -503,6 +503,8 @@ async def autopilot_reply_endpoint(
     reply_text = generate_autopilot_persona_reply(
         incoming_message=request.incoming_message,
         sender_name=request.sender_name or "Friend",
+        chat_name=request.chat_name,
+        is_group=request.is_group,
         recent_history=request.recent_chat_history,
         personal_memories=relevant_memories,
         custom_instruction=request.custom_instruction,
