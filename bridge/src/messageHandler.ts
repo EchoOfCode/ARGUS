@@ -13,6 +13,7 @@ import {
   saveChatDirectory,
   getActiveAutopilotRule,
   incrementAutopilotCount,
+  getDedicatedGroupJid,
 } from "./db.js";
 import {
   sendText,
@@ -353,7 +354,8 @@ export async function handleMessage(
                 `📩 *Incoming:* "${text}"`,
                 `💬 *Reply Sent:* "${personaRes.reply_text}"`,
               ].join("\n");
-              await sendText(sock, config.myJid, mirrorMsg, config);
+              const dedicatedJid = getDedicatedGroupJid(config);
+              await sendText(sock, dedicatedJid, mirrorMsg, config);
 
               console.log(`🚀 [Auto-Pilot] Sent reply in ${chatName || chatJid}: "${personaRes.reply_text}"`);
               return;
@@ -406,10 +408,11 @@ export async function handleMessage(
           data.confidence
         );
 
-        // Send confirmation prompt to your self-chat or dedicated group
+        // Send confirmation prompt to your dedicated ARGUS group
+        const dedicatedJid = getDedicatedGroupJid(config);
         await sendEventConfirmation(
           sock,
-          config.myJid,
+          dedicatedJid,
           pending.id,
           data.title || "Event",
           data.date || "TBD",
@@ -432,10 +435,11 @@ async function handleConfirmationAction(
   action: "yes" | "ignore" | "edit",
   config: Config
 ): Promise<void> {
-  const pending = getLatestPendingEvent(config.myJid);
+  const dedicatedJid = getDedicatedGroupJid(config);
+  const pending = getLatestPendingEvent(dedicatedJid) || getLatestPendingEvent(config.myJid);
 
   if (!pending) {
-    await sendText(sock, config.myJid, "No pending event to confirm.", config);
+    await sendText(sock, dedicatedJid, "No pending event to confirm.", config);
     return;
   }
 
@@ -444,7 +448,7 @@ async function handleConfirmationAction(
       confirmEvent(pending.id);
       await sendEventAdded(
         sock,
-        config.myJid,
+        dedicatedJid,
         pending.title || "Event",
         pending.event_date || "TBD",
         pending.event_time,
@@ -455,14 +459,14 @@ async function handleConfirmationAction(
 
     case "ignore": {
       ignoreEvent(pending.id);
-      await sendText(sock, config.myJid, "❌ Event ignored.", config);
+      await sendText(sock, dedicatedJid, "❌ Event ignored.", config);
       break;
     }
 
     case "edit": {
       await sendText(
         sock,
-        config.myJid,
+        dedicatedJid,
         `✏️ *Edit event:*\n\nTitle: ${pending.title}\nDate: ${pending.event_date}\nTime: ${pending.event_time}\n\n_Reply "yes" to add as-is, or "ignore" to skip._`,
         config
       );

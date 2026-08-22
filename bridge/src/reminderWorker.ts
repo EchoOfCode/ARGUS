@@ -2,7 +2,7 @@ import type { WASocket } from "@whiskeysockets/baileys";
 import pino from "pino";
 import cron from "node-cron";
 import { Config } from "./config.js";
-import { getDueReminders, markReminderSent } from "./db.js";
+import { getDueReminders, markReminderSent, getDedicatedGroupJid } from "./db.js";
 import { sendReminder } from "./replySender.js";
 import { handleDailyBriefing } from "./selfChat.js";
 
@@ -53,7 +53,8 @@ export function startReminderWorker(sock: WASocket, config: Config): void {
         logger.info("Triggering scheduled daily executive briefing...");
         lastBriefingDate = todayStr;
         try {
-          await handleDailyBriefing(sock, config.myJid, config);
+          const destJid = getDedicatedGroupJid(config);
+          await handleDailyBriefing(sock, destJid, config);
         } catch (err) {
           logger.error({ err }, "Daily briefing worker error");
         }

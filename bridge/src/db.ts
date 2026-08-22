@@ -678,3 +678,22 @@ export function incrementAutopilotCount(jid: string): void {
     .run(jid);
 }
 
+export function getDedicatedGroupJid(config: { dedicatedGroupName?: string; myJid: string }): string {
+  const targetName = (config.dedicatedGroupName || "ARGUS").toLowerCase().replace(/[^a-z0-9]/g, "");
+  try {
+    const rows = getDb()
+      .prepare("SELECT jid, name FROM chat_directory WHERE is_group = 1 ORDER BY id DESC")
+      .all() as Array<{ jid: string; name: string }>;
+
+    for (const r of rows) {
+      const clean = (r.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (clean.includes(targetName) || clean === "argus" || clean === "argusai") {
+        return r.jid;
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return config.myJid;
+}
+
