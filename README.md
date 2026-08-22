@@ -174,6 +174,10 @@ cd bridge && npm start
 2. In WhatsApp, create a new group named **`ARGUS`** (or text your own number in self-chat).
 3. Send **`help`** in the group to get started!
 
+> [!TIP]
+> **Encountering any connection issues, session glitches, or need a fresh QR code?**
+> Run **`fresh_start.bat`** on Windows (or remove `bridge/auth_info/` & `*.db`) to automatically clean session locks, reset local stores, and generate a brand-new QR code instantly!
+
 ---
 
 ## 🐳 Docker Deployment
