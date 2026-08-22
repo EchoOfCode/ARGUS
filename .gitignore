@@ -12,6 +12,7 @@ backend/.env.*
 bridge/.env
 bridge/.env.*
 !bridge/.env.example
+.vscode/
 
 # ─── WhatsApp Session Keys & Pairwise Credentials ──────────────────
 bridge/auth_info/
