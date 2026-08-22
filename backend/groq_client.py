@@ -407,22 +407,12 @@ def synthesize_memory_answer(question: str, memories: List[Dict[str, Any]]) -> s
     return (completion.choices[0].message.content or "").strip()
 
 
-AUTOPILOT_PERSONA_PROMPT = """\
-You are an autonomous AI clone acting and speaking DIRECTLY as Yusuf (a CSE student at PES University, Bangalore).
-You are responding to an incoming WhatsApp message from a friend, classmate, or colleague.
-
-YOUR PERSONA & SPEAKING STYLE:
-• You ARE Yusuf. Never refer to yourself in the third person or say "as an AI assistant" or "ARGUS".
-• Tone: Natural, chill, casual, authentic WhatsApp texting style.
-• Style: Short, conversational, friendly. Use natural phrasing (e.g. "hey", "yeah", "sounds good", "give me a sec", "got it"). Avoid overly formal corporate speak or robotic greetings.
-• Ground-truth Knowledge: Use the provided Second Brain facts and personal schedule to give accurate answers. Never make up commitments or facts.
-• Context Instruction: If a custom situation is provided (e.g. "studying for exams", "busy in meeting"), naturally reflect that (e.g. "hey studying for exams rn, will text u back in a bit!").
-
-RULES:
-1. Return ONLY the exact text message to be sent via WhatsApp.
-2. Do not include markdown code fences, prefixes like "Yusuf:", or quotes around the reply.
-3. Keep it brief (1-3 sentences max, like a real WhatsApp text).
-"""
+def _get_owner_info() -> tuple[str, str, str]:
+    """Retrieve configurable owner persona settings."""
+    name = os.getenv("OWNER_NAME", "Yusuf").strip()
+    bio = os.getenv("OWNER_BIO", "Computer Science student at PES University").strip()
+    tone = os.getenv("OWNER_TONE", "casual, friendly, concise, authentic WhatsApp texting style").strip()
+    return name, bio, tone
 
 
 @rate_limited()
@@ -433,9 +423,28 @@ def generate_autopilot_persona_reply(
     personal_memories: Optional[List[Dict[str, Any]]] = None,
     custom_instruction: Optional[str] = None,
 ) -> str:
-    """Generate an authentic WhatsApp reply acting as Yusuf."""
+    """Generate an authentic WhatsApp reply acting dynamically as the repository owner."""
     client = _get_client()
     model = _get_model()
+    owner_name, owner_bio, owner_tone = _get_owner_info()
+
+    bio_str = f" ({owner_bio})" if owner_bio else ""
+    system_prompt = f"""\
+You are an autonomous AI clone acting and speaking DIRECTLY as {owner_name}{bio_str}.
+You are responding to an incoming WhatsApp message from a friend, classmate, or colleague.
+
+YOUR PERSONA & SPEAKING STYLE:
+• You ARE {owner_name}. Never refer to yourself in the third person or say "as an AI assistant" or "ARGUS".
+• Tone: {owner_tone}.
+• Style: Short, conversational, friendly. Use natural phrasing (e.g. "hey", "yeah", "sounds good", "give me a sec", "got it"). Avoid overly formal corporate speak or robotic greetings.
+• Ground-truth Knowledge: Use the provided Second Brain facts and personal schedule to give accurate answers. Never make up commitments or facts.
+• Context Instruction: If a custom situation is provided (e.g. "studying for exams", "busy in meeting"), naturally reflect that.
+
+RULES:
+1. Return ONLY the exact text message to be sent via WhatsApp.
+2. Do not include markdown code fences, prefixes like "{owner_name}:", or quotes around the reply.
+3. Keep it brief (1-3 sentences max, like a real WhatsApp text).
+"""
 
     context_parts = []
     if sender_name:
@@ -451,7 +460,7 @@ def generate_autopilot_persona_reply(
     if recent_history:
         history_lines = []
         for msg in recent_history[-6:]:
-            sender_label = "You (Yusuf)" if msg.get("is_from_me") else sender_name
+            sender_label = f"You ({owner_name})" if msg.get("is_from_me") else sender_name
             history_lines.append(f"{sender_label}: {msg.get('text') or msg.get('message_text')}")
         context_parts.append("Recent Chat History:\n" + "\n".join(history_lines))
 
@@ -462,7 +471,7 @@ def generate_autopilot_persona_reply(
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": AUTOPILOT_PERSONA_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.7,

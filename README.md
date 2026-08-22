@@ -123,6 +123,9 @@ Edit `backend/.env`:
 GROQ_API_KEY=gsk_your_actual_groq_api_key
 GROQ_MODEL=openai/gpt-oss-120b
 ARGUS_SECRET=5f3668d3b40f49f9fc3dc9d02b55b96bc797023b76a327b597900c04aa5ce2ac
+OWNER_NAME=YourName
+OWNER_BIO=Computer Science student at University XYZ
+OWNER_TONE=casual, friendly, concise, authentic WhatsApp texting style
 EMAIL_USER=your_email@gmail.com
 EMAIL_PASS=your_16_character_app_password
 ```
