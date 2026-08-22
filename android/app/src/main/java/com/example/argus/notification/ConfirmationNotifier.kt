@@ -6,7 +6,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
 import com.example.argus.ArgusApplication
-import com.yusuf.argus.R
+import com.example.argus.R
 import com.example.argus.receiver.NotificationActionReceiver
 
 /**
