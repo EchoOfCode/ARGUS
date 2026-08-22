@@ -75,6 +75,8 @@ remotion/.cache/
 *.mp4
 *.webm
 *.mov
+!assets/
+!assets/*
 
 # ─── Documentation & Internal Notes ─────────────────────────────
 docs/

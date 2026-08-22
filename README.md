@@ -1,6 +1,6 @@
 <div align="center">
 
-#  ARGUS
+# 🤖 ARGUS
 ### **Autonomous Real-time General Utility System**
 *Your Personal AI Executive Assistant, Second Brain & Communication Hub on WhatsApp.*
 
@@ -12,6 +12,11 @@
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](https://docker.com)
 
 [Features](#-key-features) • [Quickstart](#-quickstart-guide) • [Docker Deployment](#-docker-deployment) • [Command Cheatsheet](#-command-cheatsheet) • [Architecture](#-architecture)
+
+<br/>
+
+### 🎬 **[Watch 60-Second Apple Keynote Commercial (1080p)](assets/argus_demo.mp4)**
+*(Hyper-realistic titanium iPhone product showcase featuring WhatsApp Second Brain, Outbound Drafter, Gmail Triage & Calendar Sync)*
 
 </div>
 
