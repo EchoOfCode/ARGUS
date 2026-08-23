@@ -333,15 +333,8 @@ export async function handleMessage(
         formData.append("file", buffer, { filename: filename, contentType: "application/pdf" });
         if (caption) formData.append("prompt", caption);
 
-        const res = await axios.post(`${config.aiBrainUrl}/documents/analyze`, formData, {
-          headers: {
-            ...formData.getHeaders(),
-            "X-Argus-Secret": config.argusSecret,
-          },
-          timeout: 60000,
-        });
+        const data = await callBrainMultipart(config, "/documents/analyze", formData);
 
-        const data = res.data;
         let reply = `📄 *Document Analysis (${filename}):*\n────────────────────────────\n${data.summary || "Analysis complete."}`;
 
         if (data.events && data.events.length > 0) {
@@ -377,15 +370,7 @@ export async function handleMessage(
         });
         if (caption) formData.append("prompt", caption);
 
-        const res = await axios.post(`${config.aiBrainUrl}/documents/analyze`, formData, {
-          headers: {
-            ...formData.getHeaders(),
-            "X-Argus-Secret": config.argusSecret,
-          },
-          timeout: 60000,
-        });
-
-        const data = res.data;
+        const data = await callBrainMultipart(config, "/documents/analyze", formData);
         let reply = `🖼️ *Visual Intelligence:* \n────────────────────────────\n${data.summary || "Analysis complete."}`;
 
         if (data.events && data.events.length > 0) {
