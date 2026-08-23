@@ -72,6 +72,18 @@ if "%PROVIDER_CHOICE%"=="2" (
 set /p PHONE_NUMBER="Enter your WhatsApp Phone Number with Country Code (no +, no spaces, e.g. 919876543210): "
 if "%PHONE_NUMBER%"=="" set PHONE_NUMBER=918088421593
 
+:: Optional: Gmail Integration
+echo.
+echo Optional: Configure Gmail Integration (Email Reading and Summaries)
+set /p CONFIGURE_GMAIL="Do you want to connect your Gmail? [y/N]: "
+if /i "%CONFIGURE_GMAIL%"=="y" (
+    echo.
+    echo Tip: Generate a 16-character Google App Password at:
+    echo   https://myaccount.google.com/apppasswords
+    set /p EMAIL_USER="Enter your Gmail address (e.g. you@gmail.com): "
+    set /p EMAIL_PASS="Enter your 16-character App Password: "
+)
+
 :: Generate 32-byte secret
 set ARGUS_SECRET=5f3668d3b40f49f9fc3dc9d02b55b96bc797023b76a327b597900c04aa5ce2ac
 
@@ -99,6 +111,13 @@ echo ARGUS_PORT=8000 >> backend\.env
 echo OWNER_NAME=%OWNER_NAME% >> backend\.env
 echo OWNER_BIO=User >> backend\.env
 echo OWNER_TONE=casual, friendly, concise, authentic WhatsApp texting style >> backend\.env
+
+if defined EMAIL_USER (
+    echo EMAIL_USER=%EMAIL_USER% >> backend\.env
+    echo EMAIL_PASS=%EMAIL_PASS% >> backend\.env
+    echo EMAIL_HOST=imap.gmail.com >> backend\.env
+    echo EMAIL_PORT=993 >> backend\.env
+)
 
 :: Write bridge/.env
 echo [3/4] Writing bridge/.env...
