@@ -876,9 +876,29 @@ export async function handleSelfChatMessage(
         await handleDailyBriefing(sock, chatJid, config);
         break;
 
-      case "memory_save":
-        await handleSaveMemory(sock, chatJid, result.extract_data?.fact || text, config);
+      case "memory_save": {
+        // Only save memory if explicitly intended, otherwise route to agent with context
+        const isExplicitMemory = /^(remember|note\s+that|save\s+note|save\s+memory|save\s+fact)\b/i.test(text);
+        if (isExplicitMemory) {
+          await handleSaveMemory(sock, chatJid, result.extract_data?.fact || text, config);
+        } else {
+          // Conversational continuation or question
+          const recentHistory = getRecentMessages(chatJid, 8).map((m) => ({
+            text: m.message_text,
+            is_from_me: m.is_from_me === 1,
+            timestamp: m.timestamp,
+          }));
+          const askResult = await callBrain(config, "/ask", {
+            question: text,
+            use_web_search: false,
+            recent_history: recentHistory,
+          });
+          if (askResult && askResult.answer) {
+            await sendText(sock, chatJid, askResult.answer, config);
+          }
+        }
         break;
+      }
 
       case "memory_recall":
         await handleRecallMemory(sock, chatJid, result.extract_data?.query || text, config);
@@ -890,7 +910,16 @@ export async function handleSelfChatMessage(
 
       case "question":
       default: {
-        const askResult = await callBrain(config, "/ask", { question: text, use_web_search: false });
+        const recentHistory = getRecentMessages(chatJid, 8).map((m) => ({
+          text: m.message_text,
+          is_from_me: m.is_from_me === 1,
+          timestamp: m.timestamp,
+        }));
+        const askResult = await callBrain(config, "/ask", {
+          question: text,
+          use_web_search: false,
+          recent_history: recentHistory,
+        });
         if (askResult && askResult.answer) {
           await sendText(sock, chatJid, askResult.answer, config);
         } else {

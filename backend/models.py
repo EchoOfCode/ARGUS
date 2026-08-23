@@ -118,6 +118,7 @@ class AskRequest(BaseModel):
 
     question: str = Field(..., description="The question to answer")
     use_web_search: bool = Field(False, description="Whether to include live web search results")
+    recent_history: Optional[List[Dict[str, Any]]] = Field(None, description="Previous messages in this conversation")
 
 
 class AskResponse(BaseModel):

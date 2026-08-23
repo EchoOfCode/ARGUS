@@ -255,7 +255,10 @@ async def ask_endpoint(
     verify_secret(x_argus_secret)
 
     try:
-        answer = run_autonomous_agent(user_prompt=request.question)
+        answer = run_autonomous_agent(
+            user_prompt=request.question,
+            recent_history=request.recent_history,
+        )
         return AskResponse(answer=answer, sources=None)
     except Exception as e:
         logger.error("Agent ask failed: %s", e)
