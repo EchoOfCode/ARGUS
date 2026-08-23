@@ -15,6 +15,7 @@ import {
   getActiveAutopilotRule,
   incrementAutopilotCount,
   getDedicatedGroupJid,
+  setDedicatedGroupJid,
   addPendingProposal,
   importVCardText,
   markFollowupReplied,
@@ -237,6 +238,11 @@ export async function handleMessage(
   const chatName = await resolveChatName(sock, chatJid, senderName);
   const isCommandChat = isDedicatedCommandChat(chatJid, chatName, config);
   const isGroup = chatJid.endsWith("@g.us");
+
+  if (isCommandChat && isGroup) {
+    setDedicatedGroupJid(chatJid);
+    saveChatDirectory(chatJid, "ARGUS", true);
+  }
 
   const rawMsg = extractRawMessage(msg);
 

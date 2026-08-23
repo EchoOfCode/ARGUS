@@ -832,8 +832,14 @@ export function incrementAutopilotCount(jid: string): void {
 
 let cachedDedicatedGroupJid: string | null = null;
 
+export function setDedicatedGroupJid(jid: string): void {
+  if (jid && jid.endsWith("@g.us")) {
+    cachedDedicatedGroupJid = jid;
+  }
+}
+
 export function getDedicatedGroupJid(config: { dedicatedGroupName?: string; myJid: string }): string {
-  if (cachedDedicatedGroupJid) {
+  if (cachedDedicatedGroupJid && cachedDedicatedGroupJid.endsWith("@g.us")) {
     return cachedDedicatedGroupJid;
   }
 
@@ -846,7 +852,7 @@ export function getDedicatedGroupJid(config: { dedicatedGroupName?: string; myJi
     // 1. Exact match first
     for (const r of rows) {
       const clean = (r.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-      if (clean === targetName || clean === "argus" || clean === "argusai") {
+      if (clean === targetName || clean === "argus" || clean === "argusai" || r.jid.startsWith("120363411331854396")) {
         cachedDedicatedGroupJid = r.jid;
         return r.jid;
       }
@@ -859,6 +865,12 @@ export function getDedicatedGroupJid(config: { dedicatedGroupName?: string; myJi
         cachedDedicatedGroupJid = r.jid;
         return r.jid;
       }
+    }
+
+    // 3. If any group was saved in directory, default to it
+    if (rows.length > 0) {
+      cachedDedicatedGroupJid = rows[0].jid;
+      return rows[0].jid;
     }
   } catch {
     // fallback
