@@ -101,11 +101,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("argus.api")
 
+from dashboard import dashboard_router
+
 app = FastAPI(
     title="ARGUS AI Brain",
     description="Multi-capability executive AI assistant backend",
     version="2.1.0",
 )
+
+app.include_router(dashboard_router)
 
 # Load shared secret
 ARGUS_SECRET = os.getenv("ARGUS_SECRET", "")

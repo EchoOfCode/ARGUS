@@ -9,7 +9,10 @@ from typing import Any, Dict, List
 try:
     from ddgs import DDGS
 except ImportError:
-    from duckduckgo_search import DDGS  # type: ignore
+    try:
+        from duckduckgo_search import DDGS  # type: ignore
+    except ImportError:
+        DDGS = None  # type: ignore
 
 logger = logging.getLogger("argus.search")
 

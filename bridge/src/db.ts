@@ -304,13 +304,36 @@ const RESERVED_STOP_WORDS = new Set([
   "me", "us", "myself", "a", "an", "the", "something", "someone", "everything", "anything",
   "joke", "story", "song", "time", "date", "weather", "news", "fact", "facts", "more",
   "why", "how", "what", "where", "who", "when", "today", "tomorrow", "tonight", "now", "later",
-  "argus", "bot", "assistant", "ai"
+  "argus", "bot", "assistant", "ai",
 ]);
+
+function levenshteinDistance(a: string, b: string): number {
+  const an = a ? a.length : 0;
+  const bn = b ? b.length : 0;
+  if (an === 0) return bn;
+  if (bn === 0) return an;
+  const matrix: number[][] = Array.from({ length: bn + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= an; j++) matrix[0][j] = j;
+  for (let i = 1; i <= bn; i++) {
+    for (let j = 1; j <= an; j++) {
+      if (b[i - 1] === a[j - 1]) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1,     // insertion
+          matrix[i - 1][j] + 1      // deletion
+        );
+      }
+    }
+  }
+  return matrix[bn][an];
+}
 
 export function findChatByNameOrQuery(query: string): { jid: string; name: string } | null {
   const rawQ = query.trim().toLowerCase();
   const cleanedQ = rawQ
-    .replace(/\b(group|chat|the|my|with|for|in|about|messages|recent)\b/gi, "")
+    .replace(/\b(group|chat|the|my|with|for|in|about|messages|recent|contact)\b/gi, "")
     .replace(/[^a-z0-9]/g, "")
     .trim();
 
@@ -347,7 +370,33 @@ export function findChatByNameOrQuery(query: string): { jid: string; name: strin
     }
   }
 
-  // 2. Matching against message_log sender_name and chat_name
+  // Priority 4: Fuzzy Typo-Tolerant Match (Levenshtein distance <= 2)
+  if (cleanedQ.length >= 4) {
+    let bestMatch: { jid: string; name: string } | null = null;
+    let minDistance = 3; // threshold
+
+    for (const c of allChats) {
+      const cClean = c.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (!cClean || cClean.length < 3) continue;
+
+      // Check distance to full name or first word
+      const distFull = levenshteinDistance(cleanedQ, cClean);
+      const firstWord = cClean.split(/[0-9\s_]+/)[0] || cClean;
+      const distFirst = levenshteinDistance(cleanedQ, firstWord);
+      const d = Math.min(distFull, distFirst);
+
+      if (d < minDistance) {
+        minDistance = d;
+        bestMatch = c;
+      }
+    }
+
+    if (bestMatch && minDistance <= 2) {
+      return bestMatch;
+    }
+  }
+
+  // 2. Fallback matching against message_log sender_name and chat_name
   const logChats = getDb()
     .prepare(
       `SELECT DISTINCT chat_jid as jid, COALESCE(chat_name, sender_name, chat_jid) as name 
@@ -373,7 +422,69 @@ export function findChatByNameOrQuery(query: string): { jid: string; name: strin
     }
   }
 
+  // Fuzzy check on log chats
+  if (cleanedQ.length >= 4) {
+    for (const c of logChats) {
+      const cClean = c.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (cClean && levenshteinDistance(cleanedQ, cClean) <= 2) {
+        return c;
+      }
+    }
+  }
+
   return null;
+}
+
+// ─── 1-Second vCard / Contacts (.vcf) Importer ──────────────────
+
+export function importVCardText(vcardText: string): { imported: number; contacts: Array<{ name: string; jid: string }> } {
+  const lines = vcardText.split(/\r?\n/);
+  const importedContacts: Array<{ name: string; jid: string }> = [];
+
+  let currentName: string | null = null;
+  let currentPhone: string | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (line.startsWith("BEGIN:VCARD")) {
+      currentName = null;
+      currentPhone = null;
+      continue;
+    }
+
+    if (line.startsWith("FN:") || line.startsWith("FN;")) {
+      currentName = line.replace(/^FN[^:]*:/i, "").trim();
+    } else if (!currentName && (line.startsWith("N:") || line.startsWith("N;"))) {
+      const parts = line.replace(/^N[^:]*:/i, "").split(";").map((p) => p.trim()).filter(Boolean);
+      currentName = parts.reverse().join(" ");
+    }
+
+    if (line.startsWith("TEL") || line.includes("TEL;")) {
+      const numRaw = line.replace(/^[^:]*:/i, "").trim();
+      const cleanNum = numRaw.replace(/[^0-9]/g, "");
+      if (cleanNum && cleanNum.length >= 7) {
+        currentPhone = cleanNum;
+      }
+    }
+
+    if (line.startsWith("END:VCARD")) {
+      if (currentName && currentPhone) {
+        let cleanJid = currentPhone;
+        // If 10 digits without country code, default to 91 (India) or preserve
+        if (cleanJid.length === 10) {
+          cleanJid = "91" + cleanJid;
+        }
+        const finalJid = `${cleanJid}@s.whatsapp.net`;
+        saveChatDirectory(finalJid, currentName, false);
+        importedContacts.push({ name: currentName, jid: finalJid });
+      }
+      currentName = null;
+      currentPhone = null;
+    }
+  }
+
+  return { imported: importedContacts.length, contacts: importedContacts };
 }
 
 export function searchMessages(query: string, limit = 10): LoggedMessage[] {

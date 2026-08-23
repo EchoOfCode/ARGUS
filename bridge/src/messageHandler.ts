@@ -15,6 +15,7 @@ import {
   incrementAutopilotCount,
   getDedicatedGroupJid,
   addPendingProposal,
+  importVCardText,
 } from "./db.js";
 import {
   sendText,
@@ -241,6 +242,75 @@ export async function handleMessage(
   if (isCommandChat && rawMsg?.audioMessage) {
     await handleVoiceNote(sock, msg, chatJid, config);
     return;
+  }
+
+  // ─── 1-Second Contact Sync (.vcf Document / Contact Card / Contacts Array) ───
+  if (isCommandChat) {
+    // 1. Single Contact Card
+    if (rawMsg?.contactMessage?.vcard) {
+      const res = importVCardText(rawMsg.contactMessage.vcard);
+      if (res.imported > 0) {
+        const c = res.contacts[0];
+        await sendText(
+          sock,
+          chatJid,
+          `📇 *Contact Synced!* Added *${c.name}* (${c.jid.replace("@s.whatsapp.net", "")}) to your ARGUS Address Book! ✨`,
+          config
+        );
+        return;
+      }
+    }
+
+    // 2. Multiple Contact Cards
+    if (rawMsg?.contactsArrayMessage?.contacts) {
+      let total = 0;
+      for (const c of rawMsg.contactsArrayMessage.contacts) {
+        if (c.vcard) {
+          const res = importVCardText(c.vcard);
+          total += res.imported;
+        }
+      }
+      if (total > 0) {
+        await sendText(
+          sock,
+          chatJid,
+          `📇 *Contact Sync Complete!* Added *${total}* contacts to your ARGUS Address Book! ✨`,
+          config
+        );
+        return;
+      }
+    }
+
+    // 3. .vcf Document File Drop
+    if (
+      rawMsg?.documentMessage &&
+      (rawMsg.documentMessage.fileName?.toLowerCase().endsWith(".vcf") ||
+        rawMsg.documentMessage.mimetype?.includes("vcard") ||
+        rawMsg.documentMessage.mimetype?.includes("text/x-vcard"))
+    ) {
+      try {
+        console.log(`📇 .vcf Contact file detected in ${chatJid}, downloading...`);
+        const buffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
+        const vcfContent = buffer.toString("utf-8");
+        const res = importVCardText(vcfContent);
+        await sendText(
+          sock,
+          chatJid,
+          [
+            `📇 *Contact Address Book Synced!*`,
+            `────────────────────────────`,
+            `✅ Successfully imported *${res.imported}* contacts into ARGUS!`,
+            `💡 You can now text or message any of them directly by name (e.g. _"tell Harshith I am on my way"_).`,
+          ].join("\n"),
+          config
+        );
+        return;
+      } catch (docErr) {
+        logger.error({ docErr }, "Failed to import .vcf document");
+        await sendText(sock, chatJid, "⚠️ Could not parse .vcf contacts file.", config);
+        return;
+      }
+    }
   }
 
   const text = getMessageText(msg);
