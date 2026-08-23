@@ -7,7 +7,7 @@ echo.
 
 :: Start AI Brain
 echo [1/2] Starting AI Brain (backend)...
-start "ARGUS Brain" cmd /k "cd /d e:\ARGUS\backend && py -3.10 -m uvicorn main:app --host 127.0.0.1 --port 8000"
+start "ARGUS Brain" cmd /k "cd /d e:\ARGUS\backend && python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload"
 
 :: Wait for brain to initialize
 echo Waiting for Brain to start...
