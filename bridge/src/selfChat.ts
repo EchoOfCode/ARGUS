@@ -521,6 +521,78 @@ export async function handleSelfChatMessage(
     return;
   }
 
+  // ─── Chat Exemption / Ignore Commands ("exclude [chat]", "exempt [chat]", "unexempt [chat]") ───
+  if (
+    normalized.startsWith("exclude ") ||
+    normalized.startsWith("exempt ") ||
+    normalized.startsWith("ignore ") ||
+    normalized.startsWith("mute ")
+  ) {
+    const targetQuery = text.replace(/^(exclude|exempt|ignore|mute)\s+(the\s+)?(group\s+|chat\s+)?/i, "").trim();
+    const found = findChatByNameOrQuery(targetQuery);
+    if (found) {
+      exemptChat(found.jid, found.name);
+      await sendText(
+        sock,
+        chatJid,
+        `🚫 *Exempted ${found.name}!* ARGUS will ignore background messages from this chat/group.`,
+        config
+      );
+      return;
+    } else {
+      exemptChat(targetQuery, targetQuery);
+      await sendText(
+        sock,
+        chatJid,
+        `🚫 *Exempted "${targetQuery}"!* ARGUS will ignore background messages from this chat/group.`,
+        config
+      );
+      return;
+    }
+  }
+
+  if (
+    normalized.startsWith("unexclude ") ||
+    normalized.startsWith("unexempt ") ||
+    normalized.startsWith("unignore ") ||
+    normalized.startsWith("unmute ")
+  ) {
+    const targetQuery = text.replace(/^(unexclude|unexempt|unignore|unmute)\s+(the\s+)?(group\s+|chat\s+)?/i, "").trim();
+    const success = unexemptChat(targetQuery);
+    if (success) {
+      await sendText(
+        sock,
+        chatJid,
+        `✅ *Unexempted "${targetQuery}"!* ARGUS will now listen to this chat.`,
+        config
+      );
+    } else {
+      await sendText(
+        sock,
+        chatJid,
+        `🔍 "${targetQuery}" was not in your exempted list.`,
+        config
+      );
+    }
+    return;
+  }
+
+  if (["exempted", "exemptions", "list exemptions", "ignored chats", "muted chats"].includes(normalized)) {
+    const list = getExemptedChats();
+    if (list.length === 0) {
+      await sendText(sock, chatJid, "📋 *No chats are currently exempted.*", config);
+    } else {
+      const items = list.map((c) => `• *${c.name}* (${c.jid.split("@")[0]})`).join("\n");
+      await sendText(
+        sock,
+        chatJid,
+        `🚫 *Currently Exempted Chats (${list.length}):*\n────────────────────────────\n${items}`,
+        config
+      );
+    }
+    return;
+  }
+
   // ─── Todo Commands ──────────────────────────────────────────
   if (["todos", "show todos", "my todos", "list", "todo"].includes(normalized)) {
     const todos = getTodos(chatJid);
