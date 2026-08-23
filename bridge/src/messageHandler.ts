@@ -330,12 +330,12 @@ export async function handleMessage(
         const buffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
 
         const formData = new FormData();
-        const blob = new Blob([buffer], { type: "application/pdf" });
-        formData.append("file", blob, filename);
+        formData.append("file", buffer, { filename: filename, contentType: "application/pdf" });
         if (caption) formData.append("prompt", caption);
 
         const res = await axios.post(`${config.aiBrainUrl}/documents/analyze`, formData, {
           headers: {
+            ...formData.getHeaders(),
             "X-Argus-Secret": config.argusSecret,
           },
           timeout: 60000,
@@ -371,12 +371,15 @@ export async function handleMessage(
         const buffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
 
         const formData = new FormData();
-        const blob = new Blob([buffer], { type: rawMsg?.imageMessage?.mimetype || "image/jpeg" });
-        formData.append("file", blob, "image.jpg");
+        formData.append("file", buffer, {
+          filename: "image.jpg",
+          contentType: rawMsg?.imageMessage?.mimetype || "image/jpeg",
+        });
         if (caption) formData.append("prompt", caption);
 
         const res = await axios.post(`${config.aiBrainUrl}/documents/analyze`, formData, {
           headers: {
+            ...formData.getHeaders(),
             "X-Argus-Secret": config.argusSecret,
           },
           timeout: 60000,
