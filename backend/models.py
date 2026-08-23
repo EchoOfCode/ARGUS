@@ -294,3 +294,75 @@ class AutopilotReplyResponse(BaseModel):
     reply_text: str
     confidence: float = 0.95
     should_send: bool = True
+
+
+# ─── Human-in-the-Loop Meeting Proposal Negotiation ───────────
+
+class ProposalDetectRequest(BaseModel):
+    """Request to detect if an incoming message contains a meeting/plan proposal."""
+
+    incoming_message: str
+    sender_name: Optional[str] = "Friend"
+    chat_name: Optional[str] = None
+    is_group: bool = False
+    reference_timestamp: Optional[str] = None
+
+
+class ProposalDetectResponse(BaseModel):
+    """Response indicating if a meeting was proposed and details."""
+
+    is_proposal: bool = False
+    title: Optional[str] = None
+    date: Optional[str] = None
+    time: Optional[str] = None
+    location: Optional[str] = None
+    buffer_reply: Optional[str] = None
+    confidence: float = 0.0
+
+
+class ProposalResolveRequest(BaseModel):
+    """Request to generate a natural reply to accept, decline, or counter-propose a meeting."""
+
+    action: Literal["accept", "decline", "counter"]
+    sender_name: Optional[str] = "Friend"
+    chat_name: Optional[str] = None
+    is_group: bool = False
+    proposed_title: str
+    proposed_date: Optional[str] = None
+    proposed_time: Optional[str] = None
+    proposed_location: Optional[str] = None
+    user_note: Optional[str] = None
+    counter_time: Optional[str] = None
+
+
+class ProposalResolveResponse(BaseModel):
+    """Response containing the generated message to send to the contact."""
+
+    reply_text: str
+    event_title: Optional[str] = None
+    event_date: Optional[str] = None
+    event_time: Optional[str] = None
+
+
+# ─── Commitment & Promise Tracking ──────────────────────────────
+
+class CommitmentDetectRequest(BaseModel):
+    """Request to detect commitments or promises made in text."""
+
+    message_text: str
+    sender_name: Optional[str] = "Contact"
+    is_from_me: bool = False
+    reference_timestamp: Optional[str] = None
+
+
+class CommitmentItem(BaseModel):
+    actor: Literal["user", "contact"]
+    promise: str
+    deadline: Optional[str] = None
+    due_date: Optional[str] = None
+    confidence: float = 0.0
+
+
+class CommitmentDetectResponse(BaseModel):
+    has_commitment: bool = False
+    commitments: List[CommitmentItem] = []

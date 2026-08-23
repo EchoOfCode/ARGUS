@@ -591,3 +591,195 @@ RULES:
         return "Hey! Tied up with something right now, will text you back in a bit."
 
 
+# ─── Human-in-the-Loop Meeting Proposal Negotiation ───────────
+
+PROPOSAL_DETECTION_PROMPT = """\
+You are an intelligent scheduling agent for ARGUS.
+Your job is to determine whether an incoming WhatsApp message is proposing a meeting, call, \
+hangout, session, coffee, or plan that requires the owner's confirmation.
+
+RULES:
+1. Return ONLY valid JSON:
+   {
+     "is_proposal": bool,
+     "title": string or null,
+     "date": "YYYY-MM-DD" or null,
+     "time": "HH:MM" or null,
+     "location": string or null,
+     "buffer_reply": string or null,
+     "confidence": float 0.0-1.0
+   }
+2. "buffer_reply" MUST be a short, natural WhatsApp text in the owner's casual voice telling the contact \
+   that they are checking their schedule / calendar and will get back to them in a moment. \
+   Examples: "give me a sec, checking my schedule and will text u back", "let me check my calendar and let u know in a bit bro".
+3. Use the provided reference_timestamp to resolve relative dates like "today", "tomorrow", "this friday".
+4. Set is_proposal to false for general questions, jokes, or non-scheduling chatter.
+"""
+
+@rate_limited()
+def detect_meeting_proposal(
+    incoming_message: str,
+    sender_name: str = "Friend",
+    chat_name: Optional[str] = None,
+    is_group: bool = False,
+    reference_timestamp: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Detect if an incoming message is asking to meet/call and generate buffer reply."""
+    client = _get_client()
+    owner_name, _, owner_tone = _get_owner_info()
+
+    user_prompt = (
+        f"Owner Name: {owner_name}\n"
+        f"Owner Texting Tone: {owner_tone}\n"
+        f"Reference Timestamp: {reference_timestamp or ''}\n"
+        f"Sender: {sender_name}\n"
+        f"Chat: {chat_name or 'Direct Chat'} (is_group={is_group})\n"
+        f"Message: \"{incoming_message}\""
+    )
+
+    try:
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": PROPOSAL_DETECTION_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            model=_get_model(),
+            max_tokens=600,
+            temperature=0.1,
+        )
+        raw = completion.choices[0].message.content or "{}"
+        cleaned = _clean_json_response(raw)
+        data = json.loads(cleaned)
+        if not isinstance(data, dict):
+            return {"is_proposal": False, "confidence": 0.0}
+        return data
+    except Exception as e:
+        logger.error("Proposal detection failed: %s", e)
+        return {"is_proposal": False, "confidence": 0.0}
+
+
+@rate_limited()
+def resolve_meeting_proposal(
+    action: str,
+    sender_name: str = "Friend",
+    chat_name: Optional[str] = None,
+    is_group: bool = False,
+    proposed_title: str = "Meeting",
+    proposed_date: Optional[str] = None,
+    proposed_time: Optional[str] = None,
+    proposed_location: Optional[str] = None,
+    user_note: Optional[str] = None,
+    counter_time: Optional[str] = None,
+) -> str:
+    """Generate an authentic WhatsApp reply confirming, declining, or counter-proposing a meeting."""
+    client = _get_client()
+    owner_name, _, owner_tone = _get_owner_info()
+
+    system_prompt = f"""\
+You are an autonomous AI clone speaking DIRECTLY as {owner_name}.
+You are responding to {sender_name} regarding their meeting proposal: "{proposed_title}" ({proposed_date} at {proposed_time}, location: {proposed_location or 'TBD'}).
+
+ACTION REQUIRED:
+- If action is "accept": Confirm enthusiastically and casually in WhatsApp style (e.g. "yeah 4pm works bro, see u at Cubbon Park!", "sounds good, let's do it!").
+- If action is "decline": Politely decline with casual tone (e.g. "ah can't make it then bro, tied up with something", or using user note if given: "{user_note}").
+- If action is "counter": Propose the new time "{counter_time}" naturally (e.g. "4pm is a bit tight, can we do {counter_time} instead?").
+
+RULES:
+1. Tone: {owner_tone}.
+2. Keep it crisp (1 short WhatsApp sentence).
+3. Return ONLY the message text to be sent. No quotes, no markdown fences.
+"""
+
+    user_prompt = (
+        f"Action: {action}\n"
+        f"Proposed: {proposed_title} on {proposed_date} at {proposed_time}\n"
+        f"Location: {proposed_location}\n"
+        f"Counter Time: {counter_time}\n"
+        f"User Note: {user_note}"
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=_get_model(),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.5,
+            max_tokens=300,
+        )
+        reply = (response.choices[0].message.content or "").strip()
+        cleaned = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+        if cleaned.startswith('"') and cleaned.endswith('"'):
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
+    except Exception as e:
+        logger.error("Failed to resolve meeting proposal: %s", e)
+        if action == "accept":
+            return f"Yeah sounds good, let's meet then!"
+        elif action == "counter" and counter_time:
+            return f"Can we do {counter_time} instead?"
+        return "Hey, won't be able to make it then!"
+
+
+# ─── Commitment & Promise Detection ─────────────────────────────
+
+COMMITMENT_PROMPT = """\
+You are a commitment & promise extractor for ARGUS Second Brain.
+Determine if the message contains a promise or commitment (e.g., "I will send the code tomorrow", \
+"will submit PPT by Sunday", "I will pay you back", "remind me to share the doc").
+
+RULES:
+1. Return ONLY valid JSON:
+   {
+     "has_commitment": bool,
+     "commitments": [
+       {
+         "actor": "user" or "contact",
+         "promise": string,
+         "deadline": string or null,
+         "due_date": "YYYY-MM-DD" or null,
+         "confidence": float 0.0-1.0
+       }
+     ]
+   }
+2. Use reference_timestamp to resolve due_date if relative days are mentioned.
+"""
+
+@rate_limited()
+def detect_commitments(
+    message_text: str,
+    sender_name: str = "Contact",
+    is_from_me: bool = False,
+    reference_timestamp: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Detect promises and commitments made in conversation."""
+    client = _get_client()
+
+    user_prompt = (
+        f"Sender: {sender_name} (is_from_me={is_from_me})\n"
+        f"Reference Timestamp: {reference_timestamp or ''}\n"
+        f"Message: \"{message_text}\""
+    )
+
+    try:
+        completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": COMMITMENT_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            model=_get_model(),
+            max_tokens=500,
+            temperature=0.1,
+        )
+        raw = completion.choices[0].message.content or "{}"
+        cleaned = _clean_json_response(raw)
+        data = json.loads(cleaned)
+        if not isinstance(data, dict):
+            return {"has_commitment": False, "commitments": []}
+        return data
+    except Exception as e:
+        logger.error("Commitment detection error: %s", e)
+        return {"has_commitment": False, "commitments": []}
+
+

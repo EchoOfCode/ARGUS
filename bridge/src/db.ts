@@ -79,6 +79,22 @@ export function initDatabase(dbPath: string): Database.Database {
       sent_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS pending_proposals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_jid TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      sender_name TEXT NOT NULL,
+      chat_name TEXT,
+      proposed_title TEXT NOT NULL,
+      proposed_date TEXT,
+      proposed_time TEXT,
+      proposed_location TEXT,
+      raw_message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      resolved_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS autopilot_rules (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -95,6 +111,7 @@ export function initDatabase(dbPath: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_messages_text ON message_log(message_text);
     CREATE INDEX IF NOT EXISTS idx_outbox_status ON pending_outbox(status);
     CREATE INDEX IF NOT EXISTS idx_pending_events_status ON pending_events(status);
+    CREATE INDEX IF NOT EXISTS idx_pending_proposals_status ON pending_proposals(status);
     CREATE INDEX IF NOT EXISTS idx_autopilot_status ON autopilot_rules(status);
   `);
 
@@ -713,5 +730,90 @@ export function getDedicatedGroupJid(config: { dedicatedGroupName?: string; myJi
   }
 
   return config.myJid;
+}
+
+// ─── Meeting Proposal Negotiation Helper Functions ──────────────
+
+export interface PendingProposal {
+  id: number;
+  sender_jid: string;
+  chat_jid: string;
+  sender_name: string;
+  chat_name?: string;
+  proposed_title: string;
+  proposed_date?: string;
+  proposed_time?: string;
+  proposed_location?: string;
+  raw_message: string;
+  status: "pending" | "accepted" | "declined" | "countered";
+  created_at: string;
+  resolved_at?: string;
+}
+
+export function addPendingProposal(
+  senderJid: string,
+  chatJid: string,
+  senderName: string,
+  chatName: string | null,
+  proposedTitle: string,
+  proposedDate: string | null,
+  proposedTime: string | null,
+  proposedLocation: string | null,
+  rawMessage: string
+): PendingProposal {
+  const stmt = getDb().prepare(`
+    INSERT INTO pending_proposals (
+      sender_jid, chat_jid, sender_name, chat_name,
+      proposed_title, proposed_date, proposed_time, proposed_location, raw_message
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const result = stmt.run(
+    senderJid,
+    chatJid,
+    senderName,
+    chatName,
+    proposedTitle,
+    proposedDate,
+    proposedTime,
+    proposedLocation,
+    rawMessage
+  );
+
+  return {
+    id: Number(result.lastInsertRowid),
+    sender_jid: senderJid,
+    chat_jid: chatJid,
+    sender_name: senderName,
+    chat_name: chatName || undefined,
+    proposed_title: proposedTitle,
+    proposed_date: proposedDate || undefined,
+    proposed_time: proposedTime || undefined,
+    proposed_location: proposedLocation || undefined,
+    raw_message: rawMessage,
+    status: "pending",
+    created_at: new Date().toISOString(),
+  };
+}
+
+export function getLatestPendingProposal(): PendingProposal | null {
+  const row = getDb()
+    .prepare("SELECT * FROM pending_proposals WHERE status = 'pending' ORDER BY id DESC LIMIT 1")
+    .get() as PendingProposal | undefined;
+  return row || null;
+}
+
+export function getPendingProposalById(id: number): PendingProposal | null {
+  const row = getDb()
+    .prepare("SELECT * FROM pending_proposals WHERE id = ?")
+    .get(id) as PendingProposal | undefined;
+  return row || null;
+}
+
+export function markProposalResolved(id: number, status: "accepted" | "declined" | "countered"): boolean {
+  const result = getDb()
+    .prepare("UPDATE pending_proposals SET status = ?, resolved_at = datetime('now') WHERE id = ?")
+    .run(status, id);
+  return result.changes > 0;
 }
 

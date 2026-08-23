@@ -14,6 +14,7 @@ import {
   getActiveAutopilotRule,
   incrementAutopilotCount,
   getDedicatedGroupJid,
+  addPendingProposal,
 } from "./db.js";
 import {
   sendText,
@@ -317,7 +318,7 @@ export async function handleMessage(
             const currentTimeStr = now.toLocaleDateString("en-US", { weekday: "long" }) + " " + now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 
             // 3. Start realistic human typing presence indicator
-            await sock.sendPresenceUpdate("composing", chatJid).catch(() => {});
+            await sock.sendPresenceUpdate("composing", chatJid).catch(() => { });
             const startTime = Date.now();
 
             // 4. Fetch last 8 messages from this conversation for multi-turn continuity
@@ -327,6 +328,66 @@ export async function handleMessage(
               )
               .all(chatJid) as any[];
             recentHistory.reverse();
+
+            // 4. Check if the message contains a meeting / call / plan proposal
+            try {
+              const proposalRes = await callBrain(config, "/autopilot/detect-proposal", {
+                incoming_message: text,
+                sender_name: senderName || autopilotRule.name || "Friend",
+                chat_name: chatName || undefined,
+                is_group: isGroup,
+                reference_timestamp: new Date().toISOString(),
+              });
+
+              if (proposalRes && proposalRes.is_proposal && proposalRes.confidence >= 0.6) {
+                console.log(`🤝 [Meeting Proposal Detected] from ${senderName || chatJid}: "${proposalRes.title}"`);
+
+                // 1. Send natural buffer reply to contact
+                const bufferReply = proposalRes.buffer_reply || "give me a sec, checking my schedule and will text u back 👍";
+                await sendText(sock, chatJid, bufferReply, config);
+                incrementAutopilotCount(autopilotRule.jid);
+
+                // 2. Add to pending proposals DB
+                addPendingProposal(
+                  senderJid,
+                  chatJid,
+                  senderName || autopilotRule.name || "Friend",
+                  chatName || null,
+                  proposalRes.title || "Meeting",
+                  proposalRes.date || null,
+                  proposalRes.time || null,
+                  proposalRes.location || null,
+                  text
+                );
+
+                // 3. Send interactive Approval Card to dedicated ARGUS group
+                const whenStr = (proposalRes.date || proposalRes.time)
+                  ? `\n📅 *When:* ${proposalRes.date || "TBD"}${proposalRes.time ? ` at ${proposalRes.time}` : ""}`
+                  : "";
+                const whereStr = proposalRes.location ? `\n📍 *Where:* ${proposalRes.location}` : "";
+                const fromStr = isGroup ? `*${senderName}* in *${chatName}*` : `*${senderName || autopilotRule.name}*`;
+
+                const approvalCard = [
+                  `🤝 *Meeting / Plan Proposal from ${fromStr}:*`,
+                  `────────────────────────────`,
+                  `📌 *Topic:* ${proposalRes.title || "Meeting"}${whenStr}${whereStr}`,
+                  `💬 *Original Message:* "${text}"`,
+                  `────────────────────────────`,
+                  `_Auto-replied with buffer:_ "${bufferReply}"`,
+                  ``,
+                  `*Choose your action:*`,
+                  `  ✅ *accept* (or *yes*) — Auto-confirms & adds to Google Calendar`,
+                  `  🔄 *suggest [time]* (e.g. *suggest 6pm*) — Proposes alternate time`,
+                  `  ❌ *decline [reason]* — Politely declines`,
+                ].join("\n");
+
+                const dedicatedJid = getDedicatedGroupJid(config);
+                await sendText(sock, dedicatedJid, approvalCard, config);
+                return;
+              }
+            } catch (proposalErr) {
+              logger.warn({ proposalErr }, "Proposal detection check skipped");
+            }
 
             // 5. Generate personalized response acting as the owner (immediate execution)
             const personaRes = await callBrain(config, "/autopilot/generate-reply", {
@@ -369,7 +430,7 @@ export async function handleMessage(
           } catch (autoErr) {
             logger.error({ autoErr, chatJid }, "Error in Auto-Pilot persona response");
           } finally {
-            await sock.sendPresenceUpdate("paused", chatJid).catch(() => {});
+            await sock.sendPresenceUpdate("paused", chatJid).catch(() => { });
           }
         }
       }

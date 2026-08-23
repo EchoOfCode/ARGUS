@@ -33,9 +33,12 @@ from email_reader import email_reader
 from groq_client import (
     answer_question,
     classify_and_tag_memory,
+    detect_commitments,
+    detect_meeting_proposal,
     extract_event,
     generate_autopilot_persona_reply,
     generate_briefing,
+    resolve_meeting_proposal,
     summarize_email,
     summarize_messages,
     synthesize_memory_answer,
@@ -55,6 +58,8 @@ from models import (
     AutopilotReplyResponse,
     BriefingRequest,
     BriefingResponse,
+    CommitmentDetectRequest,
+    CommitmentDetectResponse,
     EmailItem,
     EmailListResponse,
     EmailSearchRequest,
@@ -71,6 +76,10 @@ from models import (
     MemorySaveResponse,
     ProcessMessageRequest,
     ProcessMessageResponse,
+    ProposalDetectRequest,
+    ProposalDetectResponse,
+    ProposalResolveRequest,
+    ProposalResolveResponse,
     ReminderRequest,
     ReminderResponse,
     SummarizeRequest,
@@ -517,6 +526,74 @@ async def autopilot_reply_endpoint(
         confidence=0.95,
         should_send=True,
     )
+
+
+# ─── Human-in-the-Loop Meeting Proposal Negotiation ───────────
+
+@app.post("/autopilot/detect-proposal", response_model=ProposalDetectResponse)
+async def detect_proposal_endpoint(
+    request: ProposalDetectRequest,
+    x_argus_secret: str | None = Header(None),
+) -> ProposalDetectResponse:
+    """Detect if an incoming message is proposing a meeting/plan."""
+    verify_secret(x_argus_secret)
+
+    res = detect_meeting_proposal(
+        incoming_message=request.incoming_message,
+        sender_name=request.sender_name or "Friend",
+        chat_name=request.chat_name,
+        is_group=request.is_group,
+        reference_timestamp=request.reference_timestamp,
+    )
+    return ProposalDetectResponse(**res)
+
+
+@app.post("/autopilot/resolve-proposal", response_model=ProposalResolveResponse)
+async def resolve_proposal_endpoint(
+    request: ProposalResolveRequest,
+    x_argus_secret: str | None = Header(None),
+) -> ProposalResolveResponse:
+    """Generate authentic message to accept, decline, or counter-propose a meeting."""
+    verify_secret(x_argus_secret)
+
+    reply_text = resolve_meeting_proposal(
+        action=request.action,
+        sender_name=request.sender_name or "Friend",
+        chat_name=request.chat_name,
+        is_group=request.is_group,
+        proposed_title=request.proposed_title,
+        proposed_date=request.proposed_date,
+        proposed_time=request.proposed_time,
+        proposed_location=request.proposed_location,
+        user_note=request.user_note,
+        counter_time=request.counter_time,
+    )
+
+    return ProposalResolveResponse(
+        reply_text=reply_text,
+        event_title=request.proposed_title,
+        event_date=request.proposed_date,
+        event_time=request.proposed_time if request.action == "accept" else request.counter_time,
+    )
+
+
+# ─── Commitment & Promise Detection ─────────────────────────────
+
+@app.post("/commitments/detect", response_model=CommitmentDetectResponse)
+async def detect_commitments_endpoint(
+    request: CommitmentDetectRequest,
+    x_argus_secret: str | None = Header(None),
+) -> CommitmentDetectResponse:
+    """Detect promises and commitments made in a chat message."""
+    verify_secret(x_argus_secret)
+
+    res = detect_commitments(
+        message_text=request.message_text,
+        sender_name=request.sender_name or "Contact",
+        is_from_me=request.is_from_me,
+        reference_timestamp=request.reference_timestamp,
+    )
+    return CommitmentDetectResponse(**res)
 
 
 # ─── Health Check ───────────────────────────────────────────────

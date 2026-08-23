@@ -30,6 +30,8 @@ import {
   disableAutopilot,
   disableAllAutopilot,
   listAutopilotRules,
+  getLatestPendingProposal,
+  markProposalResolved,
 } from "./db.js";
 import {
   sendText,
@@ -287,7 +289,154 @@ export async function handleSelfChatMessage(
         return;
       }
     }
-    // no draft available — fall through
+  }
+
+  // ─── Check Pending Meeting Proposal Resolution (accept, decline, suggest [time]) ───
+  const pendingProposal = getLatestPendingProposal();
+  if (pendingProposal) {
+    // 1. Accept Proposal ("accept", "yes", "confirm", "accept meeting")
+    if (
+      ["accept", "yes", "confirm", "accept meeting", "agree", "y", "✅", "ok", "sure", "sounds good"].includes(normalized) ||
+      /^accept(\s+meeting)?$/i.test(normalized)
+    ) {
+      try {
+        const resolveRes = await callBrain(config, "/autopilot/resolve-proposal", {
+          action: "accept",
+          sender_name: pendingProposal.sender_name,
+          chat_name: pendingProposal.chat_name,
+          proposed_title: pendingProposal.proposed_title,
+          proposed_date: pendingProposal.proposed_date,
+          proposed_time: pendingProposal.proposed_time,
+          proposed_location: pendingProposal.proposed_location,
+        });
+
+        if (resolveRes && resolveRes.reply_text) {
+          // Send natural acceptance reply to contact/group
+          await sock.sendMessage(pendingProposal.chat_jid, { text: resolveRes.reply_text });
+          markProposalResolved(pendingProposal.id, "accepted");
+
+          // Add to calendar
+          if (pendingProposal.proposed_date || resolveRes.event_date) {
+            const evDate = pendingProposal.proposed_date || resolveRes.event_date || new Date().toISOString().split("T")[0];
+            const added = addPendingEvent(
+              pendingProposal.chat_jid,
+              config.myJid,
+              pendingProposal.raw_message,
+              pendingProposal.proposed_title,
+              evDate,
+              pendingProposal.proposed_time || resolveRes.event_time,
+              0.99
+            );
+            confirmEvent(added.id);
+
+            const gcalUrl = generateGoogleCalendarUrl(
+              pendingProposal.proposed_title,
+              evDate,
+              pendingProposal.proposed_time || resolveRes.event_time
+            );
+
+            await sendText(
+              sock,
+              chatJid,
+              [
+                `✅ *Meeting Confirmed with ${pendingProposal.sender_name}!*`,
+                `────────────────────────────`,
+                `💬 *Sent:* "${resolveRes.reply_text}"`,
+                `📅 *Added to Calendar:* ${pendingProposal.proposed_title} (${evDate}${pendingProposal.proposed_time ? ` at ${pendingProposal.proposed_time}` : ""})`,
+                `🔗 ${gcalUrl}`,
+                `────────────────────────────`,
+                `_Tap link above to sync directly to Google Calendar!_`,
+              ].join("\n"),
+              config
+            );
+          } else {
+            await sendText(
+              sock,
+              chatJid,
+              `✅ *Meeting Confirmed with ${pendingProposal.sender_name}!*\n💬 *Sent:* "${resolveRes.reply_text}"`,
+              config
+            );
+          }
+          return;
+        }
+      } catch (resErr) {
+        logger.error({ resErr }, "Failed to accept meeting proposal");
+      }
+    }
+
+    // 2. Suggest / Counter Proposal ("suggest 6pm", "reschedule to 5pm", "counter 7pm")
+    if (
+      normalized.startsWith("suggest ") ||
+      normalized.startsWith("counter ") ||
+      normalized.startsWith("reschedule ") ||
+      normalized.startsWith("can we do ")
+    ) {
+      const counterTime = text.replace(/^(suggest|counter|reschedule|can\s+we\s+do)\s+(to\s+)?/i, "").trim();
+      try {
+        const resolveRes = await callBrain(config, "/autopilot/resolve-proposal", {
+          action: "counter",
+          sender_name: pendingProposal.sender_name,
+          chat_name: pendingProposal.chat_name,
+          proposed_title: pendingProposal.proposed_title,
+          proposed_date: pendingProposal.proposed_date,
+          proposed_time: pendingProposal.proposed_time,
+          proposed_location: pendingProposal.proposed_location,
+          counter_time: counterTime,
+        });
+
+        if (resolveRes && resolveRes.reply_text) {
+          await sock.sendMessage(pendingProposal.chat_jid, { text: resolveRes.reply_text });
+          markProposalResolved(pendingProposal.id, "countered");
+
+          await sendText(
+            sock,
+            chatJid,
+            `🔄 *Counter-offer sent to ${pendingProposal.sender_name}!* (${counterTime})\n💬 *Sent:* "${resolveRes.reply_text}"`,
+            config
+          );
+          return;
+        }
+      } catch (resErr) {
+        logger.error({ resErr }, "Failed to counter meeting proposal");
+      }
+    }
+
+    // 3. Decline Proposal ("decline", "decline busy with exam", "reject")
+    if (
+      normalized.startsWith("decline") ||
+      normalized.startsWith("reject") ||
+      normalized === "no" ||
+      normalized === "can't make it"
+    ) {
+      const userReason = text.replace(/^(decline|reject)\s*/i, "").trim() || undefined;
+      try {
+        const resolveRes = await callBrain(config, "/autopilot/resolve-proposal", {
+          action: "decline",
+          sender_name: pendingProposal.sender_name,
+          chat_name: pendingProposal.chat_name,
+          proposed_title: pendingProposal.proposed_title,
+          proposed_date: pendingProposal.proposed_date,
+          proposed_time: pendingProposal.proposed_time,
+          proposed_location: pendingProposal.proposed_location,
+          user_note: userReason,
+        });
+
+        if (resolveRes && resolveRes.reply_text) {
+          await sock.sendMessage(pendingProposal.chat_jid, { text: resolveRes.reply_text });
+          markProposalResolved(pendingProposal.id, "declined");
+
+          await sendText(
+            sock,
+            chatJid,
+            `❌ *Declined meeting with ${pendingProposal.sender_name}.*\n💬 *Sent:* "${resolveRes.reply_text}"`,
+            config
+          );
+          return;
+        }
+      } catch (resErr) {
+        logger.error({ resErr }, "Failed to decline meeting proposal");
+      }
+    }
   }
 
   // ─── Check Pending Outbox Confirmation ("yes" / "send" / "send it" / "confirm") ───
