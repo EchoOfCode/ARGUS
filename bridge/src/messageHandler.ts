@@ -316,10 +316,9 @@ export async function handleMessage(
             const now = new Date();
             const currentTimeStr = now.toLocaleDateString("en-US", { weekday: "long" }) + " " + now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 
-            // 3. Simulate human typing presence & natural dynamic typing delay
+            // 3. Start realistic human typing presence indicator
             await sock.sendPresenceUpdate("composing", chatJid).catch(() => {});
-            const typingDelayMs = Math.min(4500, Math.max(1800, text.length * 40 + Math.floor(Math.random() * 800)));
-            await new Promise((r) => setTimeout(r, typingDelayMs));
+            const startTime = Date.now();
 
             // 4. Fetch last 8 messages from this conversation for multi-turn continuity
             const recentHistory = getDb()
@@ -329,7 +328,7 @@ export async function handleMessage(
               .all(chatJid) as any[];
             recentHistory.reverse();
 
-            // 5. Generate personalized response acting as the owner
+            // 5. Generate personalized response acting as the owner (immediate execution)
             const personaRes = await callBrain(config, "/autopilot/generate-reply", {
               chat_jid: chatJid,
               chat_name: chatName || undefined,
@@ -341,6 +340,13 @@ export async function handleMessage(
               current_time_str: currentTimeStr,
               user_style_samples: mySentSamples,
             });
+
+            // Ensure natural human delay (minimum 1.5s typing feel if LLM answered super fast)
+            const elapsed = Date.now() - startTime;
+            const targetDelay = Math.min(3500, Math.max(1500, text.length * 30));
+            if (elapsed < targetDelay) {
+              await new Promise((r) => setTimeout(r, targetDelay - elapsed));
+            }
 
             if (personaRes && personaRes.reply_text) {
               // 6. Send response directly to the chat/group

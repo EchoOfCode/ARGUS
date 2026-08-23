@@ -55,11 +55,11 @@ class TokenBucketRateLimiter:
             time.sleep(min(wait_time, 1.0))
 
 
-# Global rate limiter instance (25 RPM safety threshold)
-groq_rate_limiter = TokenBucketRateLimiter(max_requests_per_minute=25.0, capacity=20.0)
+# Global rate limiter instance (high throughput with burst capacity)
+groq_rate_limiter = TokenBucketRateLimiter(max_requests_per_minute=60.0, capacity=30.0)
 
 
-def rate_limited(limiter: TokenBucketRateLimiter = groq_rate_limiter, max_retries: int = 3):
+def rate_limited(limiter: TokenBucketRateLimiter = groq_rate_limiter, max_retries: int = 2):
     """
     Decorator that applies rate-limiting token consumption and automatic
     exponential backoff retry if rate limit (429) or transient errors occur.
@@ -68,8 +68,8 @@ def rate_limited(limiter: TokenBucketRateLimiter = groq_rate_limiter, max_retrie
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # 1. Acquire token
-            if not limiter.acquire(tokens=1.0, max_wait=20.0):
+            # 1. Acquire token (short max wait to prevent HTTP gateway timeout)
+            if not limiter.acquire(tokens=1.0, max_wait=8.0):
                 logger.warning("Proceeding with caution: token bucket wait reached limit")
 
             # 2. Execute with retries on 429
