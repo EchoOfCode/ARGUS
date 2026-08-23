@@ -4,11 +4,90 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from groq import Groq
+from openai import OpenAI
 from models import ExtractResponse
 from rate_limiter import rate_limited
 
-logger = logging.getLogger("argus.groq")
+logger = logging.getLogger("argus.llm")
+
+# ─── Universal LLM Provider Configuration ───────────────────────
+
+def _get_provider_config() -> Tuple[str, str, Optional[str], Dict[str, str], str]:
+    """
+    Resolve (provider_name, api_key, base_url, default_headers, default_model)
+    based on environment variables.
+    """
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+
+    # 1. OpenRouter
+    if provider == "openrouter" or (not provider and os.getenv("OPENROUTER_API_KEY")):
+        api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY") or ""
+        base_url = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+        headers = {
+            "HTTP-Referer": "https://get-argus.vercel.app",
+            "X-Title": "ARGUS AI Executive Assistant",
+        }
+        model = (
+            os.getenv("OPENROUTER_MODEL")
+            or os.getenv("LLM_MODEL")
+            or "meta-llama/llama-3.3-70b-instruct"
+        )
+        return "openrouter", api_key, base_url, headers, model
+
+    # 2. OpenAI Direct
+    if provider == "openai" or (not provider and os.getenv("OPENAI_API_KEY")):
+        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or ""
+        base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+        model = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL") or "gpt-4o-mini"
+        return "openai", api_key, base_url, {}, model
+
+    # 3. Ollama / Local LLM
+    if provider in {"ollama", "local"}:
+        base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+        api_key = os.getenv("LLM_API_KEY", "ollama")
+        model = os.getenv("LLM_MODEL", "llama3.3")
+        return "ollama", api_key, base_url, {}, model
+
+    # 4. Custom Generic OpenAI-Compatible (Together, DeepSeek, Mistral, vLLM, LM Studio)
+    if provider == "custom" or (not provider and os.getenv("LLM_BASE_URL")):
+        api_key = os.getenv("LLM_API_KEY") or os.getenv("CUSTOM_API_KEY") or "dummy-key"
+        base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+        model = os.getenv("LLM_MODEL") or "gpt-4o-mini"
+        return "custom", api_key, base_url, {}, model
+
+    # 5. Default / Groq
+    api_key = os.getenv("GROQ_API_KEY") or os.getenv("LLM_API_KEY") or ""
+    base_url = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    model = (
+        os.getenv("GROQ_MODEL")
+        or os.getenv("LLM_MODEL")
+        or "llama-3.3-70b-versatile"
+    )
+    return "groq", api_key, base_url, {}, model
+
+
+def _get_client() -> OpenAI:
+    """Get an OpenAI-compatible client configured for the selected provider."""
+    provider, api_key, base_url, headers, _ = _get_provider_config()
+
+    if not api_key and provider != "ollama":
+        raise RuntimeError(
+            f"No API key configured for provider '{provider}'. "
+            "Please set OPENROUTER_API_KEY, GROQ_API_KEY, OPENAI_API_KEY, or LLM_API_KEY in backend/.env"
+        )
+
+    return OpenAI(
+        api_key=api_key or "dummy",
+        base_url=base_url,
+        default_headers=headers if headers else None,
+    )
+
+
+def _get_model() -> str:
+    """Get configured model for the active provider."""
+    _, _, _, _, model = _get_provider_config()
+    return model
+
 
 # ─── System Prompts ─────────────────────────────────────────────
 
@@ -128,22 +207,8 @@ RULES:
 """
 
 
-def _get_client() -> Groq:
-    """Get a configured Groq client."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY not set in environment")
-    return Groq(api_key=api_key)
-
-
-def _get_model() -> str:
-    """Get the configured Groq model."""
-    return os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-
-
 def _clean_json_response(raw: str) -> str:
     """Strip reasoning/think tags and markdown fences from LLM response if present."""
-    import re
     cleaned = raw.strip()
     cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
     if cleaned.startswith("```"):

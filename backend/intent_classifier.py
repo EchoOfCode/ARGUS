@@ -112,14 +112,12 @@ def classify_intent_rules(message_text: str, is_self_chat: bool) -> Dict[str, An
     return None
 
 
+from groq_client import _get_client, _get_model
+
 @rate_limited()
 def classify_intent_llm(message_text: str, is_self_chat: bool, timestamp: str) -> Dict[str, Any]:
-    """Call Groq LLM for ambiguous message intent classification."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY not set")
-
-    client = Groq(api_key=api_key)
+    """Call Universal LLM for ambiguous message intent classification."""
+    client = _get_client()
 
     user_prompt = (
         f"is_self_chat: {is_self_chat}\n"
@@ -134,7 +132,7 @@ def classify_intent_llm(message_text: str, is_self_chat: bool, timestamp: str) -
             {"role": "system", "content": INTENT_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
-        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        model=_get_model(),
         max_tokens=1024,
         temperature=0.1,
     )
