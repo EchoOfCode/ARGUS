@@ -1,5 +1,6 @@
 import { downloadMediaMessage, type WASocket, type WAMessage } from "@whiskeysockets/baileys";
 import FormData from "form-data";
+import axios from "axios";
 import pino from "pino";
 import { Config } from "./config.js";
 import {
@@ -16,6 +17,7 @@ import {
   getDedicatedGroupJid,
   addPendingProposal,
   importVCardText,
+  markFollowupReplied,
 } from "./db.js";
 import {
   sendText,
@@ -311,10 +313,96 @@ export async function handleMessage(
         return;
       }
     }
+
+    // 4. PDF Document Drop for Intelligence & Deadlines
+    if (rawMsg?.documentMessage?.mimetype?.includes("pdf") || rawMsg?.documentMessage?.fileName?.toLowerCase().endsWith(".pdf")) {
+      try {
+        const filename = rawMsg?.documentMessage?.fileName || "document.pdf";
+        const caption = rawMsg?.documentMessage?.caption || "";
+
+        await sendText(sock, chatJid, `📄 *Analyzing PDF Document:* _"${filename}"_...`, config);
+        const buffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
+
+        const formData = new FormData();
+        const blob = new Blob([buffer], { type: "application/pdf" });
+        formData.append("file", blob, filename);
+        if (caption) formData.append("prompt", caption);
+
+        const res = await axios.post(`${config.aiBrainUrl}/documents/analyze`, formData, {
+          headers: {
+            "X-Argus-Secret": config.argusSecret,
+          },
+          timeout: 60000,
+        });
+
+        const data = res.data;
+        let reply = `📄 *Document Analysis (${filename}):*\n────────────────────────────\n${data.summary || "Analysis complete."}`;
+
+        if (data.events && data.events.length > 0) {
+          reply += `\n\n📅 *Extracted Deadlines & Events:*`;
+          for (const ev of data.events) {
+            reply += `\n• *${ev.title}* (${ev.date || "TBD"}${ev.time ? " " + ev.time : ""})`;
+            if (ev.date && ev.title) {
+              addPendingEvent(chatJid, senderJid || "self", `PDF: ${ev.title}`, ev.title, ev.date, ev.time, 1.0);
+            }
+          }
+        }
+
+        await sendText(sock, chatJid, reply, config);
+        return;
+      } catch (err: any) {
+        logger.error({ err }, "Failed to analyze PDF document");
+        await sendText(sock, chatJid, "⚠️ Failed to process PDF document.", config);
+        return;
+      }
+    }
+
+    // 5. Screenshot / Image Vision Drop
+    if (rawMsg?.imageMessage) {
+      try {
+        const caption = rawMsg?.imageMessage?.caption || "";
+        await sendText(sock, chatJid, "🔍 *Analyzing Image & Extracting Details...*", config);
+        const buffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
+
+        const formData = new FormData();
+        const blob = new Blob([buffer], { type: rawMsg?.imageMessage?.mimetype || "image/jpeg" });
+        formData.append("file", blob, "image.jpg");
+        if (caption) formData.append("prompt", caption);
+
+        const res = await axios.post(`${config.aiBrainUrl}/documents/analyze`, formData, {
+          headers: {
+            "X-Argus-Secret": config.argusSecret,
+          },
+          timeout: 60000,
+        });
+
+        const data = res.data;
+        let reply = `🖼️ *Visual Intelligence:* \n────────────────────────────\n${data.summary || "Analysis complete."}`;
+
+        if (data.events && data.events.length > 0) {
+          reply += `\n\n📅 *Detected Dates/Events:*`;
+          for (const ev of data.events) {
+            reply += `\n• *${ev.title}* (${ev.date || "TBD"}${ev.time ? " " + ev.time : ""})`;
+          }
+        }
+
+        await sendText(sock, chatJid, reply, config);
+        return;
+      } catch (err: any) {
+        logger.error({ err }, "Failed to analyze image");
+        await sendText(sock, chatJid, "⚠️ Failed to process image.", config);
+        return;
+      }
+    }
   }
 
   const text = getMessageText(msg);
   if (!text) return;
+
+  // Mark pending follow-up as replied if contact texts back in private chat
+  if (!isFromMe && !isGroup) {
+    markFollowupReplied(chatJid);
+  }
 
   // ─── Loop Prevention 2: Ignore bot formatted output prefixes ───
   const botPrefixes = [

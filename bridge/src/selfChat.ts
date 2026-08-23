@@ -32,6 +32,12 @@ import {
   listAutopilotRules,
   getLatestPendingProposal,
   markProposalResolved,
+  trackSentMessage,
+  getPendingFollowups,
+  getExpensesSummary,
+  getDebtsSummary,
+  type TrackedFollowup,
+  type ExpenseRecord,
 } from "./db.js";
 import {
   sendText,
@@ -589,6 +595,69 @@ export async function handleSelfChatMessage(
         `🚫 *Currently Exempted Chats (${list.length}):*\n────────────────────────────\n${items}`,
         config
       );
+    }
+    return;
+  }
+
+  // ─── Nudge / Ghosted Follow-up Tracker ──────────────────────
+  if (normalized.startsWith("nudge ") || normalized.startsWith("follow up with ") || normalized.startsWith("followup with ")) {
+    const contactQuery = text.replace(/^(nudge|follow\s*up\s+with|followup\s+with)\s+/i, "").trim();
+    const found = findChatByNameOrQuery(contactQuery);
+    if (found) {
+      const nudgeMsg = `Hey ${found.name.split(" ")[0]}, just checking in and following up on this! 👍`;
+      await sock.sendMessage(found.jid, { text: nudgeMsg });
+      trackSentMessage(found.jid, found.name, nudgeMsg);
+      await sendText(sock, chatJid, `⏳ *Nudge Sent to ${found.name}!* ("${nudgeMsg}")`, config);
+      return;
+    } else {
+      await sendText(sock, chatJid, `🔍 Could not find contact *${contactQuery}*.`, config);
+      return;
+    }
+  }
+
+  if (["followups", "pending followups", "follow ups", "ghosted", "who hasn't replied"].includes(normalized)) {
+    const list = getPendingFollowups(6); // Messages waiting for > 6 hours
+    if (list.length === 0) {
+      await sendText(sock, chatJid, "✨ *No pending follow-ups!* All your recent outgoing messages have been answered or are fresh.", config);
+    } else {
+      const items = list.map((f: TrackedFollowup, i: number) => `${i + 1}. 👤 *${f.contact_name}*\n   💬 _"${f.last_sent_text}"_\n   👉 Type *nudge ${f.contact_name}* to ping them!`).join("\n\n");
+      await sendText(sock, chatJid, `⏳ *Pending Follow-ups & Unanswered Messages (${list.length}):*\n────────────────────────────\n${items}`, config);
+    }
+    return;
+  }
+
+  // ─── Financial & Expense Ledger Commands ────────────────────
+  if (["expenses", "my expenses", "spending", "expense list", "show expenses"].includes(normalized)) {
+    const summary = getExpensesSummary("month");
+    if (summary.expenses.length === 0) {
+      await sendText(sock, chatJid, "💸 *No expenses recorded this month.* To log one: _'Paid 350 for lunch with Chinmay'_", config);
+    } else {
+      const items = summary.expenses.slice(0, 10).map((e: ExpenseRecord) => `• ₹${e.amount} — *${e.description}* (${e.category})`).join("\n");
+      await sendText(
+        sock,
+        chatJid,
+        `💸 *Expenses Breakdown (Last 30 Days):*\n────────────────────────────\n💰 *Total Spent:* ₹${summary.total}\n\n${items}`,
+        config
+      );
+    }
+    return;
+  }
+
+  if (["debts", "who owes me", "who owes me money", "lent", "borrowed", "splits"].includes(normalized)) {
+    const debts = getDebtsSummary();
+    const sections: string[] = [];
+    if (debts.owedToMe.length > 0) {
+      const owedLines = debts.owedToMe.map((d: ExpenseRecord) => `• *${d.person || "Someone"}* owes you *₹${d.amount}* (${d.description})`).join("\n");
+      sections.push(`🟢 *Money Owed To You:*\n${owedLines}`);
+    }
+    if (debts.iOwe.length > 0) {
+      const iOweLines = debts.iOwe.map((d: ExpenseRecord) => `• You owe *${d.person || "Someone"}* *₹${d.amount}* (${d.description})`).join("\n");
+      sections.push(`🔴 *Money You Owe:*\n${iOweLines}`);
+    }
+    if (sections.length === 0) {
+      await sendText(sock, chatJid, "✨ *All debts settled!* Nobody owes you money, and you have no pending debts.", config);
+    } else {
+      await sendText(sock, chatJid, `💰 *Financial Debts & Split Ledger:*\n────────────────────────────\n${sections.join("\n\n")}`, config);
     }
     return;
   }

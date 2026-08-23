@@ -95,6 +95,28 @@ export function initDatabase(dbPath: string): Database.Database {
       resolved_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS tracked_followups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_jid TEXT NOT NULL,
+      contact_name TEXT NOT NULL,
+      last_sent_text TEXT NOT NULL,
+      sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+      status TEXT NOT NULL DEFAULT 'waiting',
+      last_nudged_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_jid TEXT NOT NULL DEFAULT 'self',
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'INR',
+      category TEXT NOT NULL DEFAULT 'General',
+      description TEXT NOT NULL,
+      person TEXT,
+      is_debt INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS autopilot_rules (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -112,6 +134,8 @@ export function initDatabase(dbPath: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_outbox_status ON pending_outbox(status);
     CREATE INDEX IF NOT EXISTS idx_pending_events_status ON pending_events(status);
     CREATE INDEX IF NOT EXISTS idx_pending_proposals_status ON pending_proposals(status);
+    CREATE INDEX IF NOT EXISTS idx_followups_status ON tracked_followups(status, sent_at);
+    CREATE INDEX IF NOT EXISTS idx_expenses_person ON expenses(person, is_debt);
     CREATE INDEX IF NOT EXISTS idx_autopilot_status ON autopilot_rules(status);
   `);
 
@@ -926,5 +950,118 @@ export function markProposalResolved(id: number, status: "accepted" | "declined"
     .prepare("UPDATE pending_proposals SET status = ?, resolved_at = datetime('now') WHERE id = ?")
     .run(status, id);
   return result.changes > 0;
+}
+
+// ─── Ghosted Message & Follow-up Tracker ────────────────────────
+
+export interface TrackedFollowup {
+  id: number;
+  chat_jid: string;
+  contact_name: string;
+  last_sent_text: string;
+  sent_at: string;
+  status: "waiting" | "nudged" | "replied" | "dismissed";
+  last_nudged_at?: string;
+}
+
+export function trackSentMessage(chatJid: string, contactName: string, text: string): void {
+  // Only track for personal 1-on-1 chats
+  if (chatJid.endsWith("@g.us") || chatJid.includes("status@broadcast")) return;
+  getDb()
+    .prepare(
+      `INSERT INTO tracked_followups (chat_jid, contact_name, last_sent_text, sent_at, status)
+       VALUES (?, ?, ?, datetime('now'), 'waiting')`
+    )
+    .run(chatJid, contactName, text);
+}
+
+export function getPendingFollowups(olderThanHours = 24): TrackedFollowup[] {
+  const cutoff = new Date(Date.now() - olderThanHours * 3600 * 1000).toISOString();
+  return getDb()
+    .prepare(
+      "SELECT * FROM tracked_followups WHERE status = 'waiting' AND sent_at <= ? ORDER BY sent_at ASC LIMIT 10"
+    )
+    .all(cutoff) as TrackedFollowup[];
+}
+
+export function markFollowupReplied(chatJid: string): void {
+  getDb()
+    .prepare("UPDATE tracked_followups SET status = 'replied' WHERE chat_jid = ? AND status IN ('waiting', 'nudged')")
+    .run(chatJid);
+}
+
+export function markFollowupNudged(id: number): void {
+  getDb()
+    .prepare("UPDATE tracked_followups SET status = 'nudged', last_nudged_at = datetime('now') WHERE id = ?")
+    .run(id);
+}
+
+// ─── Conversational Expense & Split Ledger ───────────────────────
+
+export interface ExpenseRecord {
+  id: number;
+  chat_jid: string;
+  amount: number;
+  currency: string;
+  category: string;
+  description: string;
+  person?: string;
+  is_debt: number; // 0 = expense, 1 = they owe me, 2 = I owe them
+  created_at: string;
+}
+
+export function addExpense(
+  amount: number,
+  description: string,
+  person: string | null = null,
+  category = "General",
+  isDebt = 0,
+  chatJid = "self"
+): ExpenseRecord {
+  const result = getDb()
+    .prepare(
+      `INSERT INTO expenses (chat_jid, amount, currency, category, description, person, is_debt, created_at)
+       VALUES (?, ?, 'INR', ?, ?, ?, ?, datetime('now'))`
+    )
+    .run(chatJid, amount, category, description, person, isDebt);
+
+  return {
+    id: Number(result.lastInsertRowid),
+    chat_jid: chatJid,
+    amount,
+    currency: "INR",
+    category,
+    description,
+    person: person || undefined,
+    is_debt: isDebt,
+    created_at: new Date().toISOString(),
+  };
+}
+
+export function getExpensesSummary(timeWindow = "month"): { total: number; expenses: ExpenseRecord[] } {
+  let dateFilter = "datetime('now', '-30 days')";
+  if (timeWindow === "week") dateFilter = "datetime('now', '-7 days')";
+  if (timeWindow === "today") dateFilter = "datetime('now', 'start of day')";
+
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM expenses WHERE is_debt = 0 AND created_at >= ${dateFilter} ORDER BY created_at DESC LIMIT 50`
+    )
+    .all() as ExpenseRecord[];
+
+  const total = rows.reduce((sum, r) => sum + r.amount, 0);
+  return { total, expenses: rows };
+}
+
+export function getDebtsSummary(): { owedToMe: ExpenseRecord[]; iOwe: ExpenseRecord[] } {
+  const owedToMe = getDb()
+    .prepare("SELECT * FROM expenses WHERE is_debt = 1 ORDER BY created_at DESC LIMIT 50")
+    .all() as ExpenseRecord[];
+
+  const iOwe = getDb()
+    .prepare("SELECT * FROM expenses WHERE is_debt = 2 ORDER BY created_at DESC LIMIT 50")
+    .all() as ExpenseRecord[];
+
+  return { owedToMe, iOwe };
 }
 

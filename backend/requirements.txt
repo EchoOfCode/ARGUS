@@ -6,3 +6,4 @@ pydantic>=2.0.0
 python-multipart>=0.0.9
 imapclient>=3.1.0
 ddgs>=9.15.0
+pypdf>=5.0.0

@@ -30,6 +30,7 @@ from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 
 from agent_core import run_autonomous_agent, auto_harvest_memories
 from audio_transcriber import transcribe_audio_bytes
+from vision_doc_analyzer import analyze_document_or_image
 from email_reader import email_reader
 from groq_client import (
     answer_question,
@@ -615,6 +616,30 @@ async def detect_commitments_endpoint(
         reference_timestamp=request.reference_timestamp,
     )
     return CommitmentDetectResponse(**res)
+
+
+# ─── Document, PDF & Vision Intelligence ────────────────────────
+
+@app.post("/documents/analyze")
+async def analyze_document_endpoint(
+    file: UploadFile = File(...),
+    prompt: Optional[str] = None,
+    x_argus_secret: str | None = Header(None),
+) -> Dict[str, Any]:
+    """Analyze PDF document, syllabus, or screenshot image."""
+    verify_secret(x_argus_secret)
+
+    content = await file.read()
+    filename = file.filename or "document.pdf"
+    mime_type = file.content_type or "application/pdf"
+
+    res = analyze_document_or_image(
+        file_bytes=content,
+        filename=filename,
+        mime_type=mime_type,
+        user_prompt=prompt,
+    )
+    return res
 
 
 # ─── Health Check ───────────────────────────────────────────────

@@ -274,6 +274,66 @@ def tool_manage_memory(action: str, fact: Optional[str] = None, category: Option
     return {"success": False, "error": "Invalid action"}
 
 
+def tool_record_expense(
+    amount: float,
+    description: str,
+    person: Optional[str] = None,
+    category: Optional[str] = "General",
+    is_debt: int = 0,
+) -> Dict[str, Any]:
+    """Record an expense, lending, or debt in the financial ledger."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO expenses (chat_jid, amount, currency, category, description, person, is_debt, created_at)
+            VALUES ('self', ?, 'INR', ?, ?, ?, ?, datetime('now'))
+            """,
+            (amount, category or "General", description, person, is_debt),
+        )
+        conn.commit()
+        return {
+            "success": True,
+            "id": cursor.lastrowid,
+            "amount": amount,
+            "description": description,
+            "person": person,
+            "type": "lent" if is_debt == 1 else "borrowed" if is_debt == 2 else "expense",
+        }
+    finally:
+        conn.close()
+
+
+def tool_get_financial_summary(type: str = "all") -> Dict[str, Any]:
+    """Fetch financial breakdown of expenses and debts."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"total_expenses": 0, "debts_owed_to_me": [], "i_owe": []}
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM expenses WHERE is_debt = 0 ORDER BY created_at DESC LIMIT 30")
+        expenses = [dict(r) for r in cursor.fetchall()]
+        total_spent = sum(e["amount"] for e in expenses)
+
+        cursor.execute("SELECT * FROM expenses WHERE is_debt = 1 ORDER BY created_at DESC LIMIT 30")
+        owed_to_me = [dict(r) for r in cursor.fetchall()]
+
+        cursor.execute("SELECT * FROM expenses WHERE is_debt = 2 ORDER BY created_at DESC LIMIT 30")
+        i_owe = [dict(r) for r in cursor.fetchall()]
+
+        return {
+            "total_spent_recent": total_spent,
+            "recent_expenses": expenses[:10],
+            "money_owed_to_you": owed_to_me,
+            "money_you_owe": i_owe,
+        }
+    finally:
+        conn.close()
+
+
 def tool_web_search(query: str) -> List[Dict[str, Any]]:
     """Live web search."""
     from web_search import search_web
@@ -405,6 +465,37 @@ AGENT_TOOLS = [
             "name": "get_todos_and_reminders",
             "description": "Fetch active todo items and pending reminders.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "record_expense",
+            "description": "Log an expense, lending, or borrowed money in the ledger. E.g. 'Paid 450 for lunch' or 'Harshith owes me 200 for uber'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amount": {"type": "number", "description": "Amount in INR"},
+                    "description": {"type": "string", "description": "What the expense was for"},
+                    "person": {"type": "string", "description": "Name of person involved (if any)"},
+                    "category": {"type": "string", "description": "Category (Food, Travel, College, Bills, Misc)"},
+                    "is_debt": {"type": "integer", "enum": [0, 1, 2], "description": "0=personal expense, 1=they owe me, 2=I owe them"},
+                },
+                "required": ["amount", "description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_financial_summary",
+            "description": "Get a summary of recent expenses, spending, and who owes money.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["all", "expenses", "debts"]},
+                },
+            },
         },
     },
     {
@@ -543,8 +634,16 @@ Current Reference Time: {now_iso}
                         recipient_name=fn_args.get("recipient_name", ""),
                         message_text=fn_args.get("message_text", ""),
                     )
-                elif fn_name == "get_todos_and_reminders":
-                    tool_output = tool_get_todos_and_reminders()
+                elif fn_name == "record_expense":
+                    tool_output = tool_record_expense(
+                        amount=float(fn_args.get("amount", 0)),
+                        description=fn_args.get("description", "Expense"),
+                        person=fn_args.get("person"),
+                        category=fn_args.get("category", "General"),
+                        is_debt=int(fn_args.get("is_debt", 0)),
+                    )
+                elif fn_name == "get_financial_summary":
+                    tool_output = tool_get_financial_summary(type=fn_args.get("type", "all"))
                 elif fn_name == "manage_memory":
                     tool_output = tool_manage_memory(
                         action=fn_args.get("action", "recall"),

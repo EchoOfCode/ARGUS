@@ -220,12 +220,72 @@ async def get_upcoming_events() -> List[Dict[str, Any]]:
             SELECT id, title, event_date, event_time, original_text, status, created_at 
             FROM pending_events 
             WHERE status = 'confirmed' 
-            ORDER BY event_date ASC, event_time ASC LIMIT 50
+            ORDER BY event_date ASC, event_time ASC 
+            LIMIT 25
             """
         )
         return [dict(r) for r in cursor.fetchall()]
     finally:
         bridge_db.close()
+
+
+@dashboard_router.get("/api/dashboard/finances")
+async def get_dashboard_finances() -> Dict[str, Any]:
+    bridge_db = get_bridge_db()
+    if not bridge_db:
+        return {"total_spent": 0, "expenses": [], "debts_owed_to_me": [], "i_owe": []}
+
+    try:
+        cursor = bridge_db.cursor()
+        cursor.execute("SELECT * FROM expenses WHERE is_debt = 0 ORDER BY created_at DESC LIMIT 30")
+        expenses = [dict(r) for r in cursor.fetchall()]
+        total_spent = sum(e["amount"] for e in expenses)
+
+        cursor.execute("SELECT * FROM expenses WHERE is_debt = 1 ORDER BY created_at DESC LIMIT 30")
+        owed_to_me = [dict(r) for r in cursor.fetchall()]
+
+        cursor.execute("SELECT * FROM expenses WHERE is_debt = 2 ORDER BY created_at DESC LIMIT 30")
+        i_owe = [dict(r) for r in cursor.fetchall()]
+
+        return {
+            "total_spent": total_spent,
+            "expenses": expenses,
+            "debts_owed_to_me": owed_to_me,
+            "i_owe": i_owe,
+        }
+    finally:
+        bridge_db.close()
+
+
+@dashboard_router.get("/api/dashboard/followups")
+async def get_dashboard_followups() -> List[Dict[str, Any]]:
+    bridge_db = get_bridge_db()
+    if not bridge_db:
+        return []
+
+    try:
+        cursor = bridge_db.cursor()
+        cursor.execute(
+            "SELECT * FROM tracked_followups WHERE status IN ('waiting', 'nudged') ORDER BY sent_at DESC LIMIT 20"
+        )
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        bridge_db.close()
+
+
+@dashboard_router.post("/api/dashboard/chat")
+async def dashboard_chat(data: Dict[str, Any]) -> Dict[str, Any]:
+    prompt = data.get("prompt", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    from agent_core import run_autonomous_agent
+    try:
+        answer = run_autonomous_agent(user_prompt=prompt)
+        return {"success": True, "answer": answer}
+    except Exception as e:
+        logger.error("Dashboard chat failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─── Dashboard Web UI (HTML + CSS + JS) ─────────────────────────
@@ -703,14 +763,71 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     <!-- Navigation Tabs -->
     <div class="tabs-nav">
-      <button class="tab-btn active" onclick="switchTab('contacts')">📇 Address Book & Sync</button>
+      <button class="tab-btn active" onclick="switchTab('chat')">💬 Live Agent Studio</button>
+      <button class="tab-btn" onclick="switchTab('finances')">💸 Financial Ledger</button>
+      <button class="tab-btn" onclick="switchTab('followups')">⏳ Follow-up Tracker</button>
+      <button class="tab-btn" onclick="switchTab('contacts')">📇 Address Book & Sync</button>
       <button class="tab-btn" onclick="switchTab('autopilot')">🤖 Auto-Pilot Rules</button>
       <button class="tab-btn" onclick="switchTab('memories')">🧠 Second Brain Vault</button>
       <button class="tab-btn" onclick="switchTab('calendar')">📅 Upcoming Calendar</button>
     </div>
 
-    <!-- Panel 1: Contacts & Address Book -->
-    <div id="panel-contacts" class="panel active">
+    <!-- Panel 0: Live Agent Studio -->
+    <div id="panel-chat" class="panel active">
+      <div class="content-box">
+        <div class="section-header">
+          <h3 class="section-title">💬 Live Autonomous Agent Cockpit</h3>
+          <span style="font-size: 12px; color: var(--cyan);">✨ Real-Time Tool Calling & Memory</span>
+        </div>
+        
+        <div id="chat-messages" style="min-height: 280px; max-height: 480px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+          <div style="background: rgba(0, 240, 255, 0.08); border-left: 3px solid var(--cyan); padding: 12px 16px; border-radius: 8px;">
+            <strong>👁️ ARGUS Agent:</strong> Hello boss! I have direct access to your WhatsApp contacts, calendar, memories, debts, and web search. How can I assist you?
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 12px;">
+          <input type="text" id="web-chat-input" placeholder="Ask ARGUS or give a command (e.g. 'contacts starting with b', 'schedule meeting tomorrow at 4pm')..." style="flex: 1; padding: 14px 18px; border-radius: var(--radius-md); background: rgba(255,255,255,0.05); border: 1px solid var(--border-subtle); color: #fff; outline: none; font-size: 14px;" onkeydown="if(event.key==='Enter') sendWebChat()">
+          <button onclick="sendWebChat()" style="padding: 14px 24px; border-radius: var(--radius-md); background: linear-gradient(135deg, var(--cyan), var(--violet)); border: none; color: #fff; font-weight: 700; cursor: pointer;">Send ⚡</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel 1: Financial & Debt Ledger -->
+    <div id="panel-finances" class="panel">
+      <div class="content-box">
+        <div class="section-header">
+          <h3 class="section-title">💸 Conversational Financial & Split Ledger</h3>
+          <span id="finances-total" style="font-weight: 700; color: var(--emerald); font-size: 16px;">Total Spent: ₹0</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 16px;">
+          <div>
+            <h4 style="color: var(--cyan); margin-bottom: 12px;">🟢 Money Owed to You (Debts)</h4>
+            <div id="debts-owed-list" class="cards-grid" style="grid-template-columns: 1fr;"></div>
+          </div>
+          <div>
+            <h4 style="color: var(--amber); margin-bottom: 12px;">🔴 Money You Owe</h4>
+            <div id="debts-iowe-list" class="cards-grid" style="grid-template-columns: 1fr;"></div>
+          </div>
+        </div>
+        <h4 style="color: #FFF; margin: 24px 0 12px;">📝 Recent Expense Logs</h4>
+        <div id="expenses-list" class="cards-grid"></div>
+      </div>
+    </div>
+
+    <!-- Panel 2: Follow-up & Ghosted Messages -->
+    <div id="panel-followups" class="panel">
+      <div class="content-box">
+        <div class="section-header">
+          <h3 class="section-title">⏳ Follow-up & Ghosted Message Tracker</h3>
+        </div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">Tracks sent questions and proposals that haven't received a reply in 12+ hours.</p>
+        <div id="followups-list" class="cards-grid"></div>
+      </div>
+    </div>
+
+    <!-- Panel 3: Contacts & Address Book -->
+    <div id="panel-contacts" class="panel">
       <div class="content-box">
         
         <!-- vCard Drag & Drop -->
@@ -732,7 +849,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Panel 2: Auto-Pilot -->
+    <!-- Panel 4: Auto-Pilot -->
     <div id="panel-autopilot" class="panel">
       <div class="content-box">
         <div class="section-header">
@@ -744,7 +861,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Panel 3: Second Brain -->
+    <!-- Panel 5: Second Brain -->
     <div id="panel-memories" class="panel">
       <div class="content-box">
         <div class="section-header">
@@ -757,7 +874,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Panel 4: Calendar -->
+    <!-- Panel 6: Calendar -->
     <div id="panel-calendar" class="panel">
       <div class="content-box">
         <div class="section-header">
@@ -779,10 +896,117 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       event.target.classList.add('active');
       document.getElementById('panel-' + tabId).classList.add('active');
 
+      if (tabId === 'finances') loadFinances();
+      if (tabId === 'followups') loadFollowups();
       if (tabId === 'contacts') loadContacts();
       if (tabId === 'autopilot') loadAutopilot();
       if (tabId === 'memories') loadMemories();
       if (tabId === 'calendar') loadEvents();
+    }
+
+    async function sendWebChat() {
+      const input = document.getElementById('web-chat-input');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const container = document.getElementById('chat-messages');
+      container.innerHTML += `<div style="align-self: flex-end; background: rgba(139, 92, 246, 0.15); border-right: 3px solid var(--violet); padding: 10px 14px; border-radius: 8px; max-width: 80%;"><strong>You:</strong> ${text}</div>`;
+      input.value = '';
+      container.scrollTop = container.scrollHeight;
+
+      const loadingId = 'loading-' + Date.now();
+      container.innerHTML += `<div id="${loadingId}" style="background: rgba(0, 240, 255, 0.05); padding: 10px 14px; border-radius: 8px;"><em>⏳ ARGUS is thinking and checking tools...</em></div>`;
+      container.scrollTop = container.scrollHeight;
+
+      try {
+        const res = await fetch('/api/dashboard/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: text })
+        });
+        const data = await res.json();
+        document.getElementById(loadingId).remove();
+        container.innerHTML += `<div style="background: rgba(0, 240, 255, 0.08); border-left: 3px solid var(--cyan); padding: 12px 16px; border-radius: 8px; white-space: pre-wrap;"><strong>👁️ ARGUS:</strong>\n${data.answer || 'Done.'}</div>`;
+      } catch (err) {
+        document.getElementById(loadingId).remove();
+        container.innerHTML += `<div style="color: var(--rose); padding: 10px;">⚠️ Error: ${err.message}</div>`;
+      }
+      container.scrollTop = container.scrollHeight;
+    }
+
+    async function loadFinances() {
+      try {
+        const res = await fetch('/api/dashboard/finances');
+        const data = await res.json();
+        document.getElementById('finances-total').textContent = `Total Spent: ₹${data.total_spent || 0}`;
+
+        const owedBox = document.getElementById('debts-owed-list');
+        if (data.debts_owed_to_me && data.debts_owed_to_me.length > 0) {
+          owedBox.innerHTML = data.debts_owed_to_me.map(d => `
+            <div class="item-card">
+              <div class="item-info">
+                <h4>${d.person || 'Contact'} owes you ₹${d.amount}</h4>
+                <p>${d.description} • ${new Date(d.created_at).toLocaleDateString()}</p>
+              </div>
+            </div>
+          `).join('');
+        } else {
+          owedBox.innerHTML = '<div style="color: var(--text-dim); padding: 12px;">No active debts owed to you.</div>';
+        }
+
+        const iOweBox = document.getElementById('debts-iowe-list');
+        if (data.i_owe && data.i_owe.length > 0) {
+          iOweBox.innerHTML = data.i_owe.map(d => `
+            <div class="item-card">
+              <div class="item-info">
+                <h4>You owe ${d.person || 'Contact'} ₹${d.amount}</h4>
+                <p>${d.description} • ${new Date(d.created_at).toLocaleDateString()}</p>
+              </div>
+            </div>
+          `).join('');
+        } else {
+          iOweBox.innerHTML = '<div style="color: var(--text-dim); padding: 12px;">You owe nothing! 🎉</div>';
+        }
+
+        const expBox = document.getElementById('expenses-list');
+        if (data.expenses && data.expenses.length > 0) {
+          expBox.innerHTML = data.expenses.map(e => `
+            <div class="item-card">
+              <div class="item-info">
+                <h4>₹${e.amount} — ${e.description}</h4>
+                <p>Category: ${e.category} • ${new Date(e.created_at).toLocaleDateString()}</p>
+              </div>
+            </div>
+          `).join('');
+        } else {
+          expBox.innerHTML = '<div style="color: var(--text-dim); padding: 12px;">No expenses recorded yet.</div>';
+        }
+      } catch (err) {
+        console.error("Finances load error:", err);
+      }
+    }
+
+    async function loadFollowups() {
+      try {
+        const res = await fetch('/api/dashboard/followups');
+        const list = await res.json();
+        const box = document.getElementById('followups-list');
+        if (list.length === 0) {
+          box.innerHTML = '<div style="color: var(--text-dim); padding: 12px;">✨ No pending follow-ups. All messages are fresh!</div>';
+          return;
+        }
+        box.innerHTML = list.map(f => `
+          <div class="item-card">
+            <div class="item-info">
+              <h4>👤 ${f.contact_name}</h4>
+              <p style="font-style: italic; margin-top: 4px;">"${f.last_sent_text}"</p>
+              <p style="color: var(--amber); margin-top: 4px;">Sent: ${new Date(f.sent_at).toLocaleString()}</p>
+            </div>
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error("Followups load error:", err);
+      }
     }
 
     async function loadStats() {
