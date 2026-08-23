@@ -20,7 +20,7 @@ Endpoints:
 
 import logging
 import os
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -28,6 +28,7 @@ load_dotenv()
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 
+from agent_core import run_autonomous_agent, auto_harvest_memories
 from audio_transcriber import transcribe_audio_bytes
 from email_reader import email_reader
 from groq_client import (
@@ -167,6 +168,12 @@ async def process_message_endpoint(
             except Exception as e:
                 logger.error("Event extraction failed during intent processing: %s", e)
 
+        # Autonomous background episodic memory harvester
+        try:
+            auto_harvest_memories(request.message_text, sender_name=request.sender_jid)
+        except Exception:
+            pass
+
         return ProcessMessageResponse(**result)
 
     except Exception as e:
@@ -237,39 +244,46 @@ async def summarize_endpoint(
         raise HTTPException(status_code=502, detail=str(e))
 
 
-# ─── Q&A with Memory & Web Search ───────────────────────────────
+# ─── Q&A with Autonomous Agent ("OpenClaw" Core) ────────────────
 
 @app.post("/ask", response_model=AskResponse)
 async def ask_endpoint(
     request: AskRequest,
     x_argus_secret: str | None = Header(None),
 ) -> AskResponse:
-    """Answer questions using Groq with optional memory and web search."""
+    """Answer questions using Autonomous Tool-Calling Agent Engine."""
     verify_secret(x_argus_secret)
 
     try:
-        # Check memory context
-        memories = recall_memories(request.question, limit=3)
-        memory_context = "\n".join([f"- {m['fact_text']}" for m in memories]) if memories else None
-
-        # Check live web search if requested or if memory didn't answer
-        web_context = None
-        sources = None
-        if request.use_web_search:
-            search_results = search_web(request.question, max_results=3)
-            if search_results:
-                web_context = "\n\n".join([f"[{r['title']}]: {r['body']}" for r in search_results])
-                sources = [{"title": r["title"], "url": r["href"]} for r in search_results]
-
-        answer = answer_question(
-            question=request.question,
-            memory_context=memory_context,
-            web_context=web_context,
-        )
-        return AskResponse(answer=answer, sources=sources)
+        answer = run_autonomous_agent(user_prompt=request.question)
+        return AskResponse(answer=answer, sources=None)
     except Exception as e:
-        logger.error("Ask failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+        logger.error("Agent ask failed: %s", e)
+        # Fallback to direct Groq Q&A
+        try:
+            answer = answer_question(question=request.question)
+            return AskResponse(answer=answer, sources=None)
+        except Exception:
+            raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/agent/run")
+async def run_agent_endpoint(
+    request: Dict[str, Any],
+    x_argus_secret: str | None = Header(None),
+) -> Dict[str, Any]:
+    """Run autonomous tool-calling agent directly."""
+    verify_secret(x_argus_secret)
+    prompt = request.get("prompt", "")
+    history = request.get("recent_history")
+    time_str = request.get("current_time_str")
+
+    res = run_autonomous_agent(
+        user_prompt=prompt,
+        recent_history=history,
+        current_time_str=time_str,
+    )
+    return {"result": res, "success": True}
 
 
 # ─── Direct Email Integration ───────────────────────────────────
