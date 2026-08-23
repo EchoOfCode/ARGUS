@@ -1,13 +1,18 @@
 """
 Autonomous ReAct Tool-Calling Agent Engine for ARGUS ("OpenClaw" Architecture).
-Provides full agentic capabilities with real tool execution against SQLite databases,
-automatic memory extraction, and zero-hallucination grounded responses.
+Provides complete agentic superpowers:
+1. Multi-turn Conversational Memory with Co-reference Resolution
+2. Multi-Action Composite Execution in a single text (Draft + Schedule + Remind)
+3. Deep Cross-Chat Knowledge & Link Search
+4. Autonomous Relationship & Preference Learning
 """
 
 import json
 import logging
 import os
+import re
 import sqlite3
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from groq_client import _get_client, _get_model, _get_owner_info, _clean_json_response
@@ -27,7 +32,7 @@ def get_bridge_db():
     return None
 
 
-# ─── REAL GROUND-TRUTH TOOLS ────────────────────────────────────
+# ─── REAL GROUND-TRUTH DATABASE TOOLS ───────────────────────────
 
 def tool_list_contacts(prefix: Optional[str] = None, search: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
     """Query real contacts from the WhatsApp directory database."""
@@ -56,8 +61,8 @@ def tool_list_contacts(prefix: Optional[str] = None, search: Optional[str] = Non
         conn.close()
 
 
-def tool_search_chat_history(query: Optional[str] = None, chat_name: Optional[str] = None, limit: int = 15) -> List[Dict[str, Any]]:
-    """Search actual message logs across WhatsApp chats."""
+def tool_search_chat_history(query: Optional[str] = None, chat_name: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+    """Search actual message logs across WhatsApp chats and groups."""
     conn = get_bridge_db()
     if not conn:
         return []
@@ -103,6 +108,39 @@ def tool_search_chat_history(query: Optional[str] = None, chat_name: Optional[st
         conn.close()
 
 
+def tool_search_links_and_files(chat_name: Optional[str] = None, query: Optional[str] = None, limit: int = 15) -> List[Dict[str, Any]]:
+    """Search specifically for URLs, links, meet invites, and documents shared across chats."""
+    conn = get_bridge_db()
+    if not conn:
+        return []
+    try:
+        cursor = conn.cursor()
+        link_pattern = "%http%"
+        if chat_name:
+            cursor.execute(
+                """
+                SELECT chat_name, sender_name, message_text, timestamp 
+                FROM message_log 
+                WHERE (chat_name LIKE ? OR chat_jid LIKE ?) AND (message_text LIKE ? OR message_text LIKE '%zoom%' OR message_text LIKE '%meet%')
+                ORDER BY timestamp DESC LIMIT ?
+                """,
+                (f"%{chat_name}%", f"%{chat_name}%", link_pattern, limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT chat_name, sender_name, message_text, timestamp 
+                FROM message_log 
+                WHERE message_text LIKE ? OR message_text LIKE '%zoom%' OR message_text LIKE '%meet%'
+                ORDER BY timestamp DESC LIMIT ?
+                """,
+                (link_pattern, limit),
+            )
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
 def tool_get_agenda(date: Optional[str] = None) -> List[Dict[str, Any]]:
     """Fetch confirmed calendar events from the database."""
     conn = get_bridge_db()
@@ -124,36 +162,108 @@ def tool_get_agenda(date: Optional[str] = None) -> List[Dict[str, Any]]:
         conn.close()
 
 
-def tool_get_todos() -> List[Dict[str, Any]]:
-    """Fetch uncompleted todo tasks from database."""
+def tool_schedule_event(title: str, date: str, time: Optional[str] = None, location: Optional[str] = None) -> Dict[str, Any]:
+    """Directly schedule a confirmed calendar event."""
     conn = get_bridge_db()
     if not conn:
-        return []
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        loc_str = f" @ {location}" if location else ""
+        full_title = f"{title}{loc_str}"
+        cursor.execute(
+            """
+            INSERT INTO pending_events (chat_jid, sender_jid, original_text, title, event_date, event_time, confidence, status, confirmed_at)
+            VALUES ('self', 'self', ?, ?, ?, ?, 1.0, 'confirmed', datetime('now'))
+            """,
+            (f"Manual schedule: {full_title}", full_title, date, time),
+        )
+        conn.commit()
+        return {"success": True, "event_id": cursor.lastrowid, "title": full_title, "date": date, "time": time}
+    finally:
+        conn.close()
+
+
+def tool_create_reminder(reminder_text: str, due_at: str) -> Dict[str, Any]:
+    """Directly create a pending reminder."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO reminders (chat_jid, reminder_text, due_at, status) VALUES ('self', ?, ?, 'pending')",
+            (reminder_text, due_at),
+        )
+        conn.commit()
+        return {"success": True, "reminder_id": cursor.lastrowid, "reminder_text": reminder_text, "due_at": due_at}
+    finally:
+        conn.close()
+
+
+def tool_create_todo(text: str) -> Dict[str, Any]:
+    """Add a new task to the todo list."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO todos (chat_jid, text, completed) VALUES ('self', ?, 0)", (text,))
+        conn.commit()
+        return {"success": True, "todo_id": cursor.lastrowid, "text": text}
+    finally:
+        conn.close()
+
+
+def tool_draft_whatsapp_message(recipient_name: str, message_text: str) -> Dict[str, Any]:
+    """Draft a WhatsApp message to a contact ready for 1-tap dispatch."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        # Find recipient JID
+        cursor.execute(
+            "SELECT jid, name FROM chat_directory WHERE name LIKE ? ORDER BY name ASC LIMIT 1",
+            (f"%{recipient_name}%",),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"success": False, "error": f"Contact '{recipient_name}' not found in address book."}
+
+        target_jid = row["jid"]
+        target_name = row["name"]
+        cursor.execute(
+            "INSERT INTO pending_outbox (target_jid, target_name, message_text, status) VALUES (?, ?, ?, 'pending')",
+            (target_jid, target_name, message_text),
+        )
+        conn.commit()
+        return {"success": True, "draft_id": cursor.lastrowid, "recipient": target_name, "message": message_text}
+    finally:
+        conn.close()
+
+
+def tool_get_todos_and_reminders() -> Dict[str, Any]:
+    """Fetch active todos and pending reminders."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"todos": [], "reminders": []}
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT id, text, created_at FROM todos WHERE completed = 0 ORDER BY id DESC")
-        return [dict(r) for r in cursor.fetchall()]
-    finally:
-        conn.close()
+        todos = [dict(r) for r in cursor.fetchall()]
 
-
-def tool_get_reminders() -> List[Dict[str, Any]]:
-    """Fetch pending reminders from database."""
-    conn = get_bridge_db()
-    if not conn:
-        return []
-    try:
-        cursor = conn.cursor()
         cursor.execute("SELECT id, reminder_text, due_at FROM reminders WHERE status = 'pending' ORDER BY due_at ASC")
-        return [dict(r) for r in cursor.fetchall()]
+        reminders = [dict(r) for r in cursor.fetchall()]
+        return {"todos": todos, "reminders": reminders}
     finally:
         conn.close()
 
 
-def tool_manage_memory(action: str, fact: Optional[str] = None, query: Optional[str] = None) -> Dict[str, Any]:
-    """Save or recall facts from Second Brain memory."""
+def tool_manage_memory(action: str, fact: Optional[str] = None, category: Optional[str] = "General", query: Optional[str] = None) -> Dict[str, Any]:
+    """Save, recall, or search facts in Second Brain memory."""
     if action == "save" and fact:
-        mem = save_memory(fact_text=fact, category="General", importance=3)
+        mem = save_memory(fact_text=fact, category=category or "General", importance=3)
         return {"success": True, "saved": fact, "id": mem.get("id")}
     elif action == "recall" and query:
         results = recall_memories(query=query, limit=10)
@@ -170,19 +280,19 @@ def tool_web_search(query: str) -> List[Dict[str, Any]]:
     return search_web(query, max_results=5)
 
 
-# ─── TOOL DEFINITIONS FOR LLM ───────────────────────────────────
+# ─── COMPLETE AGENT TOOL DEFINITIONS ────────────────────────────
 
 AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "list_contacts",
-            "description": "Fetch real contacts from the user's synced WhatsApp Address Book. Use prefix (e.g. 'b', 'har') or search query.",
+            "description": "Fetch real contacts from the user's WhatsApp Address Book. Filter by starting letter/prefix or search query.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "prefix": {"type": "string", "description": "Starting letter or prefix, e.g. 'b' or 'a'"},
-                    "search": {"type": "string", "description": "Name search substring, e.g. 'harshith' or 'dad'"},
+                    "prefix": {"type": "string", "description": "Starting letter, e.g. 'b' or 'm'"},
+                    "search": {"type": "string", "description": "Name search substring, e.g. 'harshith'"},
                 },
             },
         },
@@ -191,12 +301,26 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "search_chat_history",
-            "description": "Search past WhatsApp message logs to find what people said, links shared, or conversation details.",
+            "description": "Search past WhatsApp message logs across chats and groups to find what was said, assignment notes, or discussions.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Keyword to search in messages"},
-                    "chat_name": {"type": "string", "description": "Name of contact or group chat to inspect"},
+                    "chat_name": {"type": "string", "description": "Name of contact or group chat (optional)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_links_and_files",
+            "description": "Search specifically for Google Meet links, Zoom links, website URLs, and files shared in chats.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chat_name": {"type": "string", "description": "Specific group or contact name (optional)"},
+                    "query": {"type": "string", "description": "Search keyword (optional)"},
                 },
             },
         },
@@ -205,12 +329,73 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_agenda",
-            "description": "Fetch upcoming confirmed calendar events and meetings.",
+            "description": "Fetch upcoming confirmed calendar events, meetings, and classes.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "date": {"type": "string", "description": "Date in YYYY-MM-DD format (optional)"},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_event",
+            "description": "Schedule a new confirmed calendar event or meeting.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Event title"},
+                    "date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
+                    "time": {"type": "string", "description": "Time in HH:MM format, e.g. 17:00"},
+                    "location": {"type": "string", "description": "Location (optional)"},
+                },
+                "required": ["title", "date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_reminder",
+            "description": "Create a new reminder with a due timestamp.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reminder_text": {"type": "string", "description": "What to remind the user about"},
+                    "due_at": {"type": "string", "description": "ISO timestamp or YYYY-MM-DD HH:MM"},
+                },
+                "required": ["reminder_text", "due_at"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_todo",
+            "description": "Add a task to the user's todo list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Task description"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draft_whatsapp_message",
+            "description": "Draft a WhatsApp message to a contact ready for sending.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient_name": {"type": "string", "description": "Name of contact to message"},
+                    "message_text": {"type": "string", "description": "Message content to send"},
+                },
+                "required": ["recipient_name", "message_text"],
             },
         },
     },
@@ -226,13 +411,14 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "manage_memory",
-            "description": "Save a new personal fact or recall facts from the Second Brain memory vault.",
+            "description": "Save personal facts, relationships, credentials, or recall details from Second Brain.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["save", "recall", "list_all"]},
                     "fact": {"type": "string", "description": "Fact to save"},
-                    "query": {"type": "string", "description": "Topic to recall"},
+                    "category": {"type": "string", "enum": ["Academics", "Work", "People", "Preferences", "Credentials", "General"]},
+                    "query": {"type": "string", "description": "Query to search memory"},
                 },
                 "required": ["action"],
             },
@@ -242,7 +428,7 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search live web for real-time news, current info, or documentation.",
+            "description": "Search live web for real-time news, current events, or documentation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -255,7 +441,7 @@ AGENT_TOOLS = [
 ]
 
 
-# ─── AGENT REACT EXECUTION LOOP ─────────────────────────────────
+# ─── AGENT REACT MULTI-STEP EXECUTION LOOP ───────────────────────
 
 @rate_limited()
 def run_autonomous_agent(
@@ -265,24 +451,26 @@ def run_autonomous_agent(
 ) -> str:
     """
     Run autonomous tool-calling agent with multi-step reasoning.
-    Executes real database tools and returns grounded answer.
+    Can execute multiple tools in sequence (e.g. Draft message + Schedule event).
     """
     client = _get_client()
     model = _get_model()
     owner_name, owner_bio, owner_tone = _get_owner_info()
 
-    system_prompt = f"""\
-You are ARGUS, the autonomous, hyper-competent AI Chief of Staff and personal agent for {owner_name}.
-You have direct, real-time access to the user's WhatsApp contacts database, chat history, calendar agenda, \
-Second Brain memory vault, todos, and live web search.
+    now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-CRITICAL PRINCIPLES:
-1. GROUND-TRUTH ONLY: NEVER invent, hallucinate, or guess contacts, phone numbers, messages, or calendar events.
-   Always call the appropriate tool (e.g. `list_contacts`, `get_agenda`, `manage_memory`) to retrieve real data.
-2. If the user asks for contacts (e.g. "contacts starting with b", "who is in my directory?"), YOU MUST call `list_contacts`.
-3. If the user asks what was said or discussed, call `search_chat_history`.
-4. Tone: {owner_tone}. Be sharp, concise, proactive, respectful, and ultra-helpful like an elite Chief of Staff.
-5. If no items match, state clearly and factually that none were found.
+    system_prompt = f"""\
+You are ARGUS, the elite, autonomous AI Chief of Staff and personal assistant for {owner_name}.
+You have direct, real-time access to the user's WhatsApp contacts database, cross-chat history, calendar agenda, \
+Second Brain memory vault, todos, reminders, and live web search.
+
+CORE CAPABILITIES:
+1. MULTI-ACTION COMPOSITE EXECUTION: If the user gives multi-part requests (e.g. "tell Harshith I'll be there and schedule our sync tomorrow at 5pm and remind me to bring laptop"), \
+   YOU MUST EXECUTE ALL TOOLS in sequence (draft_whatsapp_message + schedule_event + create_reminder) and present a clean unified summary.
+2. GROUND-TRUTH ONLY: NEVER hallucinate contacts, messages, or schedules. Always query SQLite tools.
+3. CONVERSATIONAL CONTINUITY: Understand follow-up requests (e.g. "starting with b", "what about him?", "reschedule that") using conversation history.
+4. TONE: {owner_tone}. Be sharp, proactive, concise, respectful, and ultra-competent.
+Current Reference Time: {now_iso}
 """
 
     messages = [
@@ -293,7 +481,7 @@ CRITICAL PRINCIPLES:
         messages.append({"role": "system", "content": f"Current Date/Time: {current_time_str}"})
 
     if recent_history:
-        for msg in recent_history[-6:]:
+        for msg in recent_history[-8:]:
             role = "assistant" if msg.get("is_from_me") else "user"
             content = msg.get("text") or msg.get("message_text") or ""
             if content:
@@ -301,22 +489,24 @@ CRITICAL PRINCIPLES:
 
     messages.append({"role": "user", "content": user_prompt})
 
-    # Step 1: Initial model completion with tool capabilities
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=AGENT_TOOLS,
-            tool_choice="auto",
-            temperature=0.2,
-            max_tokens=1000,
-        )
+    # Execute up to 3 turns of tool calling loop
+    for step in range(3):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=AGENT_TOOLS,
+                tool_choice="auto",
+                temperature=0.2,
+                max_tokens=1000,
+            )
 
-        response_message = response.choices[0].message
-        tool_calls = getattr(response_message, "tool_calls", None)
+            response_message = response.choices[0].message
+            tool_calls = getattr(response_message, "tool_calls", None)
 
-        # Step 2: If the agent decides to invoke tools, execute them against SQLite
-        if tool_calls:
+            if not tool_calls:
+                return response_message.content or "How can I assist you, boss?"
+
             messages.append(response_message)
 
             for tc in tool_calls:
@@ -324,29 +514,42 @@ CRITICAL PRINCIPLES:
                 fn_args = json.loads(tc.function.arguments or "{}")
                 tool_output: Any = None
 
-                logger.info("Agent executing tool: %s with args: %s", fn_name, fn_args)
+                logger.info("Agent executing tool [%d]: %s with args: %s", step + 1, fn_name, fn_args)
 
                 if fn_name == "list_contacts":
-                    tool_output = tool_list_contacts(
-                        prefix=fn_args.get("prefix"),
-                        search=fn_args.get("search"),
-                    )
+                    tool_output = tool_list_contacts(prefix=fn_args.get("prefix"), search=fn_args.get("search"))
                 elif fn_name == "search_chat_history":
-                    tool_output = tool_search_chat_history(
-                        query=fn_args.get("query"),
-                        chat_name=fn_args.get("chat_name"),
-                    )
+                    tool_output = tool_search_chat_history(query=fn_args.get("query"), chat_name=fn_args.get("chat_name"))
+                elif fn_name == "search_links_and_files":
+                    tool_output = tool_search_links_and_files(chat_name=fn_args.get("chat_name"), query=fn_args.get("query"))
                 elif fn_name == "get_agenda":
                     tool_output = tool_get_agenda(date=fn_args.get("date"))
+                elif fn_name == "schedule_event":
+                    tool_output = tool_schedule_event(
+                        title=fn_args.get("title", "Meeting"),
+                        date=fn_args.get("date", datetime.now().strftime("%Y-%m-%d")),
+                        time=fn_args.get("time"),
+                        location=fn_args.get("location"),
+                    )
+                elif fn_name == "create_reminder":
+                    tool_output = tool_create_reminder(
+                        reminder_text=fn_args.get("reminder_text", "Reminder"),
+                        due_at=fn_args.get("due_at", datetime.now().strftime("%Y-%m-%d %H:%M")),
+                    )
+                elif fn_name == "create_todo":
+                    tool_output = tool_create_todo(text=fn_args.get("text", "Task"))
+                elif fn_name == "draft_whatsapp_message":
+                    tool_output = tool_draft_whatsapp_message(
+                        recipient_name=fn_args.get("recipient_name", ""),
+                        message_text=fn_args.get("message_text", ""),
+                    )
                 elif fn_name == "get_todos_and_reminders":
-                    tool_output = {
-                        "todos": tool_get_todos(),
-                        "reminders": tool_get_reminders(),
-                    }
+                    tool_output = tool_get_todos_and_reminders()
                 elif fn_name == "manage_memory":
                     tool_output = tool_manage_memory(
                         action=fn_args.get("action", "recall"),
                         fact=fn_args.get("fact"),
+                        category=fn_args.get("category", "General"),
                         query=fn_args.get("query"),
                     )
                 elif fn_name == "web_search":
@@ -361,35 +564,29 @@ CRITICAL PRINCIPLES:
                     "content": json.dumps(tool_output),
                 })
 
-            # Step 3: Second completion with real tool outputs
-            second_response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=1000,
-            )
-            return second_response.choices[0].message.content or "Done."
+        except Exception as e:
+            logger.error("Agent loop error: %s", e, exc_info=True)
+            return f"I encountered an error executing that: {e}"
 
-        # If no tool was needed, return direct text
-        return response_message.content or "How can I assist you, boss?"
-
-    except Exception as e:
-        logger.error("Agent execution error: %s", e, exc_info=True)
-        # Fallback to direct answer if tool calling fails
-        return f"I ran into an issue accessing your local databases: {e}"
+    return "Done, boss."
 
 
-# ─── AUTONOMOUS BACKGROUND MEMORY HARVESTER ─────────────────────
+# ─── AUTONOMOUS BACKGROUND EPISODIC MEMORY HARVESTER ────────────
 
 AUTO_MEMORY_PROMPT = """\
-You are an autonomous episodic memory extractor for ARGUS Second Brain.
-Analyze the message text and determine if the user or contact revealed any IMPORTANT personal facts, \
-preferences, relationships, project details, credentials, or schedules that should be permanently remembered.
+You are an autonomous relationship & episodic memory extractor for ARGUS Second Brain.
+Analyze the message text and extract IMPORTANT personal facts, preferences, relationships, \
+project roles, family details, or schedules.
+
+EXAMPLES OF FACTS TO EXTRACT:
+- "Harshith is my teammate for SIH" -> category: "People", fact: "Harshith is on Yusuf's SIH team"
+- "I have DSA class on Mondays" -> category: "Academics", fact: "Has DSA class on Mondays"
+- "Prefers evening calls after 6pm" -> category: "Preferences", fact: "Prefers calls after 6pm"
+- "My sister's birthday is Oct 14" -> category: "People", fact: "Sister's birthday is October 14"
 
 RULES:
-1. ONLY extract meaningful, persistent facts (e.g. "User studies CS at PES", "Harshith is working on a drone project", "User prefers evening meetings", "Mom's birthday is March 12").
-2. DO NOT extract casual chatter, greetings, jokes, or ephemeral remarks.
-3. Return ONLY valid JSON:
+1. ONLY extract lasting, meaningful facts. Ignore fleeting chatter.
+2. Return ONLY valid JSON:
    {
      "should_remember": bool,
      "facts": [
