@@ -8,9 +8,12 @@ import io
 import json
 import logging
 import os
-import re
 from typing import Any, Dict, List, Optional
-import pypdf
+
+try:
+    import pypdf
+except ImportError:
+    pypdf = None
 
 from groq_client import _get_client, _get_model, _clean_json_response, _get_provider_config
 from rate_limiter import rate_limited
@@ -45,6 +48,15 @@ RULES:
 
 def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
     """Extract all text from PDF bytes."""
+    if not pypdf:
+        logger.warning("pypdf is not installed. Using raw text parser.")
+        try:
+            raw = pdf_bytes.decode("latin-1", errors="ignore")
+            strings = re.findall(r"\((.*?)\)", raw)
+            return "\n".join(s.strip() for s in strings if len(s.strip()) > 3)[:10000]
+        except Exception:
+            return ""
+
     try:
         reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
         pages_text = []
