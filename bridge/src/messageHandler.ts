@@ -446,7 +446,7 @@ export async function handleMessage(
 
   // ─── Check Auto-Pilot Persona Auto-Responder (1-on-1 DMs & Groups) ───
   if (!isFromMe && (senderJid || chatJid)) {
-    const autopilotRule = getActiveAutopilotRule(chatJid, senderJid);
+    const autopilotRule = getActiveAutopilotRule(chatJid, senderJid, senderName, chatName);
     if (autopilotRule && autopilotRule.status === "active") {
       // Don't auto-reply to commands or inside the dedicated ARGUS command group
       if (!isCommandChat) {

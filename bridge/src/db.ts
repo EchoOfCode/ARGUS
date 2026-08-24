@@ -761,59 +761,74 @@ export function disableAllAutopilot(): boolean {
   return result.changes > 0;
 }
 
-export function getActiveAutopilotRule(chatJid: string, senderJid?: string): AutopilotRule | null {
-  // 1. Direct match on chatJid (handles groups like 120363...g.us as well as 1-on-1 DMs)
-  if (chatJid) {
-    const cleanPhone = chatJid.split(":")[0].replace(/@.*/, "").replace(/[^0-9]/g, "");
-    let specific = getDb()
-      .prepare(
-        `SELECT * FROM autopilot_rules 
-         WHERE (jid = ? OR jid LIKE ? OR (LENGTH(?) >= 7 AND jid LIKE ?)) 
-         AND status = 'active'`
-      )
-      .get(chatJid, `${cleanPhone}@%`, cleanPhone, `%${cleanPhone}%`) as AutopilotRule | undefined;
-    if (specific) return specific;
+export function getActiveAutopilotRule(
+  chatJid: string,
+  senderJid?: string | null,
+  senderName?: string | null,
+  chatName?: string | null
+): AutopilotRule | null {
+  const allRules = getDb()
+    .prepare("SELECT * FROM autopilot_rules WHERE status = 'active'")
+    .all() as AutopilotRule[];
 
-    // Match chatJid against directory name (e.g. group name)
-    const dirEntry = getDb()
-      .prepare("SELECT name FROM chat_directory WHERE jid = ? OR jid LIKE ?")
-      .get(chatJid, `%${cleanPhone}%`) as { name: string } | undefined;
-    if (dirEntry && dirEntry.name) {
-      specific = getDb()
-        .prepare("SELECT * FROM autopilot_rules WHERE LOWER(name) = LOWER(?) AND status = 'active'")
-        .get(dirEntry.name) as AutopilotRule | undefined;
-      if (specific) return specific;
+  if (!allRules || allRules.length === 0) return null;
+
+  const cleanPhone = (chatJid || "").split(":")[0].replace(/@.*/, "").replace(/[^0-9]/g, "");
+  const cleanSenderPhone = (senderJid || "").split(":")[0].replace(/@.*/, "").replace(/[^0-9]/g, "");
+
+  const cleanSenderName = (senderName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const cleanChatName = (chatName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  let globalRule: AutopilotRule | null = null;
+
+  for (const rule of allRules) {
+    if (rule.jid === "GLOBAL") {
+      globalRule = rule;
+      continue;
+    }
+
+    const cleanRuleJid = (rule.jid || "").split(":")[0].replace(/@.*/, "").replace(/[^0-9]/g, "");
+    const cleanRuleName = (rule.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    // 1. Direct JID Match (chatJid, senderJid, or numeric phone match)
+    if (rule.jid === chatJid || rule.jid === senderJid) return rule;
+    if (cleanRuleJid && cleanRuleJid.length >= 7) {
+      if (cleanPhone === cleanRuleJid || cleanSenderPhone === cleanRuleJid) return rule;
+    }
+
+    // 2. Exact or Substring Name Match (handles "Harshith" matching "Harshith Nadella", @lid chats)
+    if (cleanRuleName.length >= 3) {
+      if (cleanSenderName && (cleanSenderName.includes(cleanRuleName) || cleanRuleName.includes(cleanSenderName))) {
+        return rule;
+      }
+      if (cleanChatName && (cleanChatName.includes(cleanRuleName) || cleanRuleName.includes(cleanChatName))) {
+        return rule;
+      }
     }
   }
 
-  // 2. Direct match on senderJid (if individual person inside a group has a specific rule)
-  if (senderJid && senderJid !== chatJid) {
-    const cleanSender = senderJid.split(":")[0].replace(/@.*/, "").replace(/[^0-9]/g, "");
-    let specific = getDb()
-      .prepare(
-        `SELECT * FROM autopilot_rules 
-         WHERE (jid = ? OR jid LIKE ? OR (LENGTH(?) >= 7 AND jid LIKE ?)) 
-         AND status = 'active'`
-      )
-      .get(senderJid, `${cleanSender}@%`, cleanSender, `%${cleanSender}%`) as AutopilotRule | undefined;
-    if (specific) return specific;
+  // 3. Check Chat Directory for contact name mapping
+  try {
+    const dirRow = getDb()
+      .prepare("SELECT name FROM chat_directory WHERE jid = ? OR jid = ?")
+      .get(chatJid, senderJid || "") as { name: string } | undefined;
 
-    const contact = getDb()
-      .prepare("SELECT name FROM chat_directory WHERE jid = ? OR jid LIKE ?")
-      .get(senderJid, `%${cleanSender}%`) as { name: string } | undefined;
-    if (contact && contact.name) {
-      specific = getDb()
-        .prepare("SELECT * FROM autopilot_rules WHERE LOWER(name) = LOWER(?) AND status = 'active'")
-        .get(contact.name) as AutopilotRule | undefined;
-      if (specific) return specific;
+    if (dirRow && dirRow.name) {
+      const cleanDirName = dirRow.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const rule of allRules) {
+        if (rule.jid === "GLOBAL") continue;
+        const cleanRuleName = (rule.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (cleanRuleName.length >= 3 && (cleanDirName.includes(cleanRuleName) || cleanRuleName.includes(cleanDirName))) {
+          return rule;
+        }
+      }
     }
+  } catch {
+    // Ignore directory lookup error
   }
 
-  // 3. Fallback to GLOBAL rule
-  const global = getDb()
-    .prepare("SELECT * FROM autopilot_rules WHERE jid = 'GLOBAL' AND status = 'active'")
-    .get() as AutopilotRule | undefined;
-  return global || null;
+  // 4. Return Global Rule if active
+  return globalRule;
 }
 
 export function listAutopilotRules(): AutopilotRule[] {
