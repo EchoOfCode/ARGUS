@@ -104,6 +104,10 @@ def classify_intent_rules(message_text: str, is_self_chat: bool) -> Dict[str, An
         if lower.startswith("remind me ") or lower.startswith("reminder "):
             return {"intent": "reminder", "confidence": 1.0, "should_respond": True, "extract_data": None}
 
+        # 7. Fast greetings & Chief of Staff check-ins (0ms instant resolution)
+        if lower in ["hi", "hello", "hey", "yo", "sup", "howdy", "gm", "good morning", "good evening", "online", "status", "ping", "are you there", "argus"]:
+            return {"intent": "general_qa", "confidence": 1.0, "should_respond": True, "extract_data": None}
+
     else:
         # Passive messages from other chats: if NO scheduling keywords, skip immediately!
         if not has_scheduling_cue(text):

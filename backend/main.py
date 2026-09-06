@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile, BackgroundTasks
 
 from agent_core import run_autonomous_agent, auto_harvest_memories
 from audio_transcriber import transcribe_audio_bytes
@@ -132,6 +132,7 @@ def verify_secret(x_argus_secret: str | None) -> None:
 @app.post("/process-message", response_model=ProcessMessageResponse)
 async def process_message_endpoint(
     request: ProcessMessageRequest,
+    background_tasks: BackgroundTasks,
     x_argus_secret: str | None = Header(None),
 ) -> ProcessMessageResponse:
     """Classify the intent of a WhatsApp message."""
@@ -169,11 +170,9 @@ async def process_message_endpoint(
             except Exception as e:
                 logger.error("Event extraction failed during intent processing: %s", e)
 
-        # Autonomous background episodic memory harvester
-        try:
-            auto_harvest_memories(request.message_text, sender_name=request.sender_jid)
-        except Exception:
-            pass
+        # Non-blocking background episodic memory harvester (only for meaningful texts)
+        if len(request.message_text.strip()) >= 15:
+            background_tasks.add_task(auto_harvest_memories, request.message_text, request.sender_jid)
 
         return ProcessMessageResponse(**result)
 

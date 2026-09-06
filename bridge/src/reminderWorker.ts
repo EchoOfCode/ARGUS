@@ -31,11 +31,21 @@ export function startReminderWorker(sock: WASocket, config: Config): void {
 
         for (const reminder of dueReminders) {
           try {
-            await sendReminder(sock, reminder.chat_jid, reminder.reminder_text, config);
+            const destJid = reminder.chat_jid && reminder.chat_jid.includes("@")
+              ? reminder.chat_jid
+              : getDedicatedGroupJid(config);
+            await sendReminder(sock, destJid, reminder.reminder_text, config);
             markReminderSent(reminder.id);
             logger.info({ id: reminder.id, text: reminder.reminder_text }, "Reminder sent");
           } catch (err) {
-            logger.error({ err, id: reminder.id }, "Failed to send reminder, will retry next cycle");
+            try {
+              const fallbackJid = getDedicatedGroupJid(config);
+              await sendReminder(sock, fallbackJid, reminder.reminder_text, config);
+              markReminderSent(reminder.id);
+              logger.info({ id: reminder.id }, "Reminder sent via dedicated group fallback");
+            } catch (fallbackErr) {
+              logger.error({ err, id: reminder.id }, "Failed to send reminder, will retry next cycle");
+            }
           }
         }
       }
