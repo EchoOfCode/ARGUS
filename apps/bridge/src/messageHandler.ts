@@ -29,6 +29,8 @@ import {
 } from "./replySender.js";
 import { handleSelfChatMessage } from "./selfChat.js";
 import { callBrain, callBrainMultipart } from "./brainClient.js";
+import { isAuthorizedCommandTurn, isCommandChannel } from "./authority.js";
+import { isBridgeOriginatedMessage } from "./policy/dispatcher.js";
 
 const logger = pino({ name: "argus:handler" });
 
@@ -145,28 +147,15 @@ async function resolveChatName(
 }
 
 /**
- * Checks if a chat is a dedicated ARGUS command center (Self-Chat or Group named ARGUS).
+ * Checks if a chat is an authorized command channel (ADR 0002: Pinned Group JID or Self-Chat).
+ * Group names are NEVER trusted.
  */
 export function isDedicatedCommandChat(
   chatJid: string,
-  chatName: string,
+  _chatName: string,
   config: Config
 ): boolean {
-  const normChat = normalizeJid(chatJid);
-  const normMy = normalizeJid(config.myJid);
-
-  // Self-chat match
-  if (normChat === normMy) return true;
-
-  // Group name match
-  const cleanName = chatName.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const targetName = config.dedicatedGroupName.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-  if (cleanName.includes(targetName) || cleanName === "argus" || cleanName === "argusai") {
-    return true;
-  }
-
-  return false;
+  return isCommandChannel(chatJid, config.myJid, config.commandGroupJid);
 }
 
 /**
@@ -179,7 +168,7 @@ async function handleVoiceNote(
   config: Config
 ): Promise<void> {
   try {
-    console.log(`🎙️ Voice note detected in ${chatJid}, downloading...`);
+    console.log(`🎙️ Voice note detected in command channel ${chatJid}, downloading...`);
     const buffer = (await downloadMediaMessage(msg, "buffer", {})) as Buffer;
 
     if (!buffer || buffer.length === 0) {
@@ -221,33 +210,48 @@ export async function handleMessage(
   msg: WAMessage,
   config: Config
 ): Promise<void> {
-  // ─── Loop Prevention 1: Ignore messages sent by ARGUS itself ───
-  if (msg.key.id && isBotSentMessage(msg.key.id)) {
+  // ─── Loop Prevention 1: Ignore messages sent by ARGUS itself (ADR 0002) ───
+  if (msg.key.id && (isBridgeOriginatedMessage(msg.key.id) || isBotSentMessage(msg.key.id))) {
+    logger.debug({ id: msg.key.id }, "Dropped bridge-originated message (echo loop prevention)");
     return;
   }
 
   const chatJid = msg.key.remoteJid;
   if (!chatJid) return;
+  const isGroup = chatJid.endsWith("@g.us");
 
   const isFromMe = msg.key.fromMe || false;
   const senderJid = isFromMe ? config.myJid : msg.key.participant || chatJid;
   const senderName = getSenderName(msg);
   const timestamp = new Date((msg.messageTimestamp as number) * 1000).toISOString();
 
+  // Evaluate ADR 0002 Authority
+  const isCommandChat = isCommandChannel(chatJid, config.myJid, config.commandGroupJid);
+  const isAuthorized = isAuthorizedCommandTurn({
+    chatJid,
+    senderJid,
+    isBridgeOriginated: Boolean(msg.key.id && isBridgeOriginatedMessage(msg.key.id)),
+    ownerJid: config.myJid,
+    commandGroupJid: config.commandGroupJid,
+  });
+
+  // Strict Scoping (ADR 0002): Non-owner in command channel gets ZERO tokens, ZERO tool calls, ZERO response
+  if (isCommandChat && !isAuthorized) {
+    logger.warn({ senderJid, chatJid }, "Ignored non-owner message in command channel (0 tokens/actions)");
+    return;
+  }
+
   // Derive chat name / group name
   const chatName = await resolveChatName(sock, chatJid, senderName);
-  const isCommandChat = isDedicatedCommandChat(chatJid, chatName, config);
-  const isGroup = chatJid.endsWith("@g.us");
-
-  if (isCommandChat && isGroup) {
-    setDedicatedGroupJid(chatJid);
-    saveChatDirectory(chatJid, "ARGUS", true);
-  }
 
   const rawMsg = extractRawMessage(msg);
 
-  // ─── Voice Note in Command Chat (Self-Chat or Dedicated ARGUS Group) ───
+  // ─── Voice Note in Command Chat (Strictly authorized owner only) ───
   if (isCommandChat && rawMsg?.audioMessage) {
+    if (!isAuthorized) {
+      logger.warn({ senderJid, chatJid }, "Ignored non-owner voice note in command channel");
+      return;
+    }
     await handleVoiceNote(sock, msg, chatJid, config);
     return;
   }
@@ -419,8 +423,8 @@ export async function handleMessage(
     saveChatDirectory(senderJid, senderName, false);
   }
 
-  // Log message in local SQLite database for history & catch-up
-  logMessage(chatJid, chatName, senderJid, senderName, text, timestamp, isFromMe);
+  // Log message in durable journal for history & catch-up (ADR 0001)
+  logMessage(chatJid, chatName, senderJid, senderName, text, timestamp, isFromMe, msg.key.id || undefined);
 
   // Explicit Command Keyword Check
   const isExplicitCommand =

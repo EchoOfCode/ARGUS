@@ -43,7 +43,9 @@ import qrcode from "qrcode-terminal";
 import path from "path";
 
 import { loadConfig, Config } from "./config.js";
-import { initDatabase } from "./db.js";
+import { initJournal, startJournalWorker } from "./journal.js";
+import { deriveOwnerIdentity } from "./authority.js";
+import { callBrain } from "./brainClient.js";
 import { handleMessage } from "./messageHandler.js";
 import { startReminderWorker } from "./reminderWorker.js";
 
@@ -73,9 +75,10 @@ const rawMessageStore = new Map<string, any>();
 async function connectToWhatsApp(): Promise<void> {
   config = loadConfig();
 
-  // Initialize SQLite
-  initDatabase(config.dbPath);
-  logger.info({ dbPath: config.dbPath }, "Database initialized");
+  // Initialize durable append-only journal and start drain worker (ADR 0001)
+  initJournal();
+  startJournalWorker(config);
+  logger.info("Durable append-only journal initialized and worker started");
 
   // Load or create auth state
   const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
@@ -157,17 +160,26 @@ async function connectToWhatsApp(): Promise<void> {
 
       logger.info("WhatsApp connection established");
 
-      // Sync participating groups to chat directory
+      // Verify owner identity matches paired session credentials (ADR 0002)
+      try {
+        const identity = deriveOwnerIdentity(sock!.user, config.myJid);
+        logger.info(identity, "Verified owner identity from WhatsApp credentials");
+      } catch (err: any) {
+        logger.fatal({ error: err.message }, "Halting bridge due to identity mismatch assertion failure");
+        process.exit(1);
+      }
+
+      // Sync participating groups to Brain chat directory via REST API
       try {
         const groups = await sock!.groupFetchAllParticipating();
-        for (const [jid, metadata] of Object.entries(groups)) {
-          if (metadata && metadata.subject) {
-            initDatabase(config.dbPath);
-            const { saveChatDirectory } = await import("./db.js");
-            saveChatDirectory(jid, metadata.subject, true);
-          }
+        const contactList = Object.entries(groups)
+          .filter(([_, meta]) => meta && meta.subject)
+          .map(([jid, meta]) => ({ jid, name: meta.subject, is_group: true }));
+
+        if (contactList.length > 0) {
+          await callBrain(config, "/api/contacts/sync", { contacts: contactList }).catch(() => {});
         }
-        logger.info({ groupCount: Object.keys(groups).length }, "Synced WhatsApp groups into directory");
+        logger.info({ groupCount: contactList.length }, "Synced WhatsApp groups into Brain directory");
       } catch (err) {
         logger.warn({ err }, "Could not auto-fetch group directory");
       }
@@ -177,24 +189,30 @@ async function connectToWhatsApp(): Promise<void> {
     }
   });
 
-  // ─── Contact Address Book Synchronization ───────────────────
+  // ─── Contact Address Book Synchronization via Brain API ───────
   sock.ev.on("contacts.upsert", async (contacts: any[]) => {
-    const { saveChatDirectory } = await import("./db.js");
-    for (const c of contacts) {
-      const name = c.name || c.notify || c.verifiedName;
-      if (c.id && name) {
-        saveChatDirectory(c.id, name, false);
-      }
+    const contactList = contacts
+      .filter((c) => c.id && (c.name || c.notify || c.verifiedName))
+      .map((c) => ({
+        jid: c.id,
+        name: c.name || c.notify || c.verifiedName,
+        is_group: c.id.endsWith("@g.us"),
+      }));
+    if (contactList.length > 0) {
+      callBrain(config, "/api/contacts/sync", { contacts: contactList }).catch(() => {});
     }
   });
 
   sock.ev.on("contacts.update", async (updates: any[]) => {
-    const { saveChatDirectory } = await import("./db.js");
-    for (const c of updates) {
-      const name = c.name || c.notify || c.verifiedName;
-      if (c.id && name) {
-        saveChatDirectory(c.id, name, false);
-      }
+    const contactList = updates
+      .filter((c) => c.id && (c.name || c.notify || c.verifiedName))
+      .map((c) => ({
+        jid: c.id,
+        name: c.name || c.notify || c.verifiedName,
+        is_group: c.id.endsWith("@g.us"),
+      }));
+    if (contactList.length > 0) {
+      callBrain(config, "/api/contacts/sync", { contacts: contactList }).catch(() => {});
     }
   });
 

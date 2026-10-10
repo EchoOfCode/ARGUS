@@ -280,7 +280,7 @@ export async function handleSelfChatMessage(
       const recipientName = sendItToMatch[1].trim();
       const found = findChatByNameOrQuery(recipientName);
       if (found) {
-        await sock.sendMessage(found.jid, { text: draftToUse });
+        await sendText(sock, found.jid, draftToUse, config);
         if (pendingOutbox) markOutboxSent(pendingOutbox.id);
         lastGeneratedDraft = null;
         await sendText(sock, chatJid, `✅ *Message sent to ${found.name}!*`, config);
@@ -318,7 +318,7 @@ export async function handleSelfChatMessage(
 
         if (resolveRes && resolveRes.reply_text) {
           // Send natural acceptance reply to contact/group
-          await sock.sendMessage(pendingProposal.chat_jid, { text: resolveRes.reply_text });
+          await sendText(sock, pendingProposal.chat_jid, resolveRes.reply_text, config);
           markProposalResolved(pendingProposal.id, "accepted");
 
           // Add to calendar
@@ -391,7 +391,7 @@ export async function handleSelfChatMessage(
         });
 
         if (resolveRes && resolveRes.reply_text) {
-          await sock.sendMessage(pendingProposal.chat_jid, { text: resolveRes.reply_text });
+          await sendText(sock, pendingProposal.chat_jid, resolveRes.reply_text, config);
           markProposalResolved(pendingProposal.id, "countered");
 
           await sendText(
@@ -428,7 +428,7 @@ export async function handleSelfChatMessage(
         });
 
         if (resolveRes && resolveRes.reply_text) {
-          await sock.sendMessage(pendingProposal.chat_jid, { text: resolveRes.reply_text });
+          await sendText(sock, pendingProposal.chat_jid, resolveRes.reply_text, config);
           markProposalResolved(pendingProposal.id, "declined");
 
           await sendText(
@@ -452,7 +452,7 @@ export async function handleSelfChatMessage(
   ) {
     const pendingOutbox = getLatestPendingOutbox();
     if (pendingOutbox) {
-      await sock.sendMessage(pendingOutbox.target_jid, { text: pendingOutbox.message_text });
+      await sendText(sock, pendingOutbox.target_jid, pendingOutbox.message_text, config);
       markOutboxSent(pendingOutbox.id);
       lastGeneratedDraft = null;
       await sendText(
@@ -605,7 +605,7 @@ export async function handleSelfChatMessage(
     const found = findChatByNameOrQuery(contactQuery);
     if (found) {
       const nudgeMsg = `Hey ${found.name.split(" ")[0]}, just checking in and following up on this! 👍`;
-      await sock.sendMessage(found.jid, { text: nudgeMsg });
+      await sendText(sock, found.jid, nudgeMsg, config);
       trackSentMessage(found.jid, found.name, nudgeMsg);
       await sendText(sock, chatJid, `⏳ *Nudge Sent to ${found.name}!* ("${nudgeMsg}")`, config);
       return;

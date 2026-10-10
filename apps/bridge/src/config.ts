@@ -23,6 +23,7 @@ export interface Config {
   briefingMinute: number;
   enableDailyBriefing: boolean;
   dedicatedGroupName: string;
+  commandGroupJid?: string;
   enablePassiveAlerts: boolean;
   ownerName: string;
 }
@@ -55,6 +56,7 @@ export const configSchema = z.object({
   BRIEFING_MINUTE: z.coerce.number().default(0),
   ENABLE_DAILY_BRIEFING: z.string().optional().default("true"),
   DEDICATED_GROUP_NAME: z.string().default("ARGUS"),
+  COMMAND_GROUP_JID: z.string().optional().default(""),
   ENABLE_PASSIVE_ALERTS: z.string().optional().default("false"),
   OWNER_NAME: z.string().default("User"),
   AUTH_DIR: z.string().optional(),
@@ -90,6 +92,7 @@ export function loadConfig(envOverride?: Record<string, string | undefined>): Co
     briefingMinute: data.BRIEFING_MINUTE,
     enableDailyBriefing: data.ENABLE_DAILY_BRIEFING !== "false",
     dedicatedGroupName: data.DEDICATED_GROUP_NAME,
+    commandGroupJid: data.COMMAND_GROUP_JID || undefined,
     enablePassiveAlerts: data.ENABLE_PASSIVE_ALERTS === "true",
     ownerName: data.OWNER_NAME,
   };

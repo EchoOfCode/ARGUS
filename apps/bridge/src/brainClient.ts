@@ -1,4 +1,5 @@
 import axios from "axios";
+import crypto from "crypto";
 import FormData from "form-data";
 import pino from "pino";
 import { Config } from "./config.js";
@@ -6,22 +7,44 @@ import { Config } from "./config.js";
 const logger = pino({ name: "argus:brainClient" });
 
 /**
+ * Generate cryptographic HMAC-SHA256 headers with timestamp (ADR 0001).
+ */
+export function generateAuthHeaders(secret: string, payloadString: string): Record<string, string> {
+  const ts = Date.now().toString();
+  const hmac = crypto.createHmac("sha256", secret);
+  hmac.update(`${ts}.${payloadString}`);
+  const signature = "sha256=" + hmac.digest("hex");
+
+  return {
+    "X-Argus-Timestamp": ts,
+    "X-Argus-Signature": signature,
+    "X-Argus-Secret": secret, // legacy fallback
+  };
+}
+
+/**
  * Call the AI Brain (FastAPI backend) with JSON payload.
  */
 export async function callBrain(
   config: Config,
   endpoint: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown> = {},
+  method: "GET" | "POST" = "POST"
 ): Promise<any> {
   const url = `${config.aiBrainUrl}${endpoint}`;
+  const payloadString = method === "GET" ? "" : JSON.stringify(data);
+  const authHeaders = generateAuthHeaders(config.argusSecret, payloadString);
 
-  logger.debug({ url, endpoint }, "Calling AI Brain");
+  logger.debug({ url, endpoint, method }, "Calling AI Brain");
 
   try {
-    const response = await axios.post(url, data, {
+    const response = await axios({
+      method,
+      url,
+      data: method === "POST" ? data : undefined,
       headers: {
         "Content-Type": "application/json",
-        "X-Argus-Secret": config.argusSecret,
+        ...authHeaders,
       },
       timeout: 60000,
     });
@@ -53,6 +76,7 @@ export async function callBrainMultipart(
   formData: FormData
 ): Promise<any> {
   const url = `${config.aiBrainUrl}${endpoint}`;
+  const authHeaders = generateAuthHeaders(config.argusSecret, "");
 
   logger.debug({ url, endpoint }, "Calling AI Brain (multipart)");
 
@@ -60,7 +84,7 @@ export async function callBrainMultipart(
     const response = await axios.post(url, formData, {
       headers: {
         ...formData.getHeaders(),
-        "X-Argus-Secret": config.argusSecret,
+        ...authHeaders,
       },
       timeout: 30000,
     });

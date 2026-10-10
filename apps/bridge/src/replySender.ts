@@ -5,11 +5,12 @@ import { Config } from "./config.js";
 const logger = pino({ name: "argus:reply" });
 
 let lastSendTime = 0;
-const sentMessageIds = new Set<string>();
+
+import { dispatchOutboundMessage, isBridgeOriginatedMessage } from "./policy/dispatcher.js";
 
 export function isBotSentMessage(messageId?: string | null): boolean {
   if (!messageId) return false;
-  return sentMessageIds.has(messageId);
+  return isBridgeOriginatedMessage(messageId);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -20,7 +21,8 @@ async function rateLimitedSend(
   sock: WASocket,
   jid: string,
   content: { text: string },
-  config: Config
+  config: Config,
+  triggerType: "owner_command" | "autopilot_reply" | "reminder_alert" = "owner_command"
 ): Promise<void> {
   const now = Date.now();
   const elapsed = now - lastSendTime;
@@ -30,25 +32,17 @@ async function rateLimitedSend(
     await sleep(delay - elapsed);
   }
 
-  try {
-    const result = await sock.sendMessage(jid, content);
+  const result = await dispatchOutboundMessage(sock, config, jid, content, {
+    triggerType,
+    isGroup: jid.endsWith("@g.us"),
+  });
+
+  if (result.sent) {
     lastSendTime = Date.now();
-
-    if (result?.key?.id) {
-      sentMessageIds.add(result.key.id);
-      // Keep set size bounded
-      if (sentMessageIds.size > 2000) {
-        const first = sentMessageIds.values().next().value;
-        if (first) sentMessageIds.delete(first);
-      }
-    }
-
-    console.log(`📤 Reply sent to [${jid}]:\n${content.text.substring(0, 120)}${content.text.length > 120 ? "..." : ""}\n`);
-    logger.info({ to: jid, length: content.text.length }, "Message sent");
-  } catch (err) {
-    console.error(`❌ Failed to send reply to [${jid}]:`, err);
-    logger.error({ err, to: jid }, "Failed to send message");
-    throw err;
+    console.log(`📤 Message dispatched to [${jid}]:\n${content.text.substring(0, 120)}${content.text.length > 120 ? "..." : ""}\n`);
+    logger.info({ to: jid, length: content.text.length }, "Message sent via policy");
+  } else {
+    logger.info({ to: jid, reason: result.reason }, "Message not sent by policy");
   }
 }
 

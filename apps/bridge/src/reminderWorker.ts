@@ -2,7 +2,7 @@ import type { WASocket } from "@whiskeysockets/baileys";
 import pino from "pino";
 import cron from "node-cron";
 import { Config } from "./config.js";
-import { getDueReminders, markReminderSent, getDedicatedGroupJid } from "./db.js";
+import { callBrain } from "./brainClient.js";
 import { sendReminder } from "./replySender.js";
 import { handleDailyBriefing } from "./selfChat.js";
 
@@ -12,7 +12,7 @@ let lastBriefingDate = "";
 
 /**
  * Start the background worker for:
- * 1. Minute-by-minute due reminders
+ * 1. Minute-by-minute due reminders (queried from Brain via authenticated API)
  * 2. Daily morning executive briefing
  */
 export function startReminderWorker(sock: WASocket, config: Config): void {
@@ -24,7 +24,12 @@ export function startReminderWorker(sock: WASocket, config: Config): void {
 
     // ─── 1. Due Reminders ──────────────────────────────────────
     try {
-      const dueReminders = getDueReminders();
+      const res = await callBrain(config, "/api/reminders/due", {}, "GET").catch((err) => {
+        logger.warn({ error: err.message }, "Could not fetch due reminders from brain");
+        return null;
+      });
+
+      const dueReminders = res?.reminders || [];
 
       if (dueReminders.length > 0) {
         logger.info({ count: dueReminders.length }, "Due reminders found");
@@ -33,16 +38,16 @@ export function startReminderWorker(sock: WASocket, config: Config): void {
           try {
             const destJid = reminder.chat_jid && reminder.chat_jid.includes("@")
               ? reminder.chat_jid
-              : getDedicatedGroupJid(config);
+              : (config.commandGroupJid || config.myJid);
             await sendReminder(sock, destJid, reminder.reminder_text, config);
-            markReminderSent(reminder.id);
-            logger.info({ id: reminder.id, text: reminder.reminder_text }, "Reminder sent");
+            await callBrain(config, `/api/reminders/${reminder.id}/ack`, {}, "POST");
+            logger.info({ id: reminder.id, text: reminder.reminder_text }, "Reminder sent and acknowledged");
           } catch (err) {
             try {
-              const fallbackJid = getDedicatedGroupJid(config);
+              const fallbackJid = config.commandGroupJid || config.myJid;
               await sendReminder(sock, fallbackJid, reminder.reminder_text, config);
-              markReminderSent(reminder.id);
-              logger.info({ id: reminder.id }, "Reminder sent via dedicated group fallback");
+              await callBrain(config, `/api/reminders/${reminder.id}/ack`, {}, "POST");
+              logger.info({ id: reminder.id }, "Reminder sent via command group fallback");
             } catch (fallbackErr) {
               logger.error({ err, id: reminder.id }, "Failed to send reminder, will retry next cycle");
             }
@@ -63,7 +68,7 @@ export function startReminderWorker(sock: WASocket, config: Config): void {
         logger.info("Triggering scheduled daily executive briefing...");
         lastBriefingDate = todayStr;
         try {
-          const destJid = getDedicatedGroupJid(config);
+          const destJid = config.commandGroupJid || config.myJid;
           await handleDailyBriefing(sock, destJid, config);
         } catch (err) {
           logger.error({ err }, "Daily briefing worker error");
