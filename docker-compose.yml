@@ -62,6 +62,50 @@ services:
     stdin_open: true
     tty: true
 
+  # ─── ARGUS Web UI (Next.js Standalone) ────────────────────────
+  argus-web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: argus-web
+    restart: unless-stopped
+    depends_on:
+      argus-brain:
+        condition: service_healthy
+    expose:
+      - "3000"
+    environment:
+      - BRAIN_URL=http://argus-brain:8000
+      - NODE_ENV=production
+      - HOSTNAME=0.0.0.0
+      - PORT=3000
+    env_file:
+      - ./apps/brain/.env
+    networks:
+      - argus-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  # ─── Reverse Proxy (Caddy: Localhost 127.0.0.1 Loopback Only) ─
+  caddy-proxy:
+    image: caddy:2-alpine
+    container_name: argus-caddy
+    restart: unless-stopped
+    depends_on:
+      - argus-web
+    ports:
+      # Bound strictly to 127.0.0.1 (Never 0.0.0.0). Remote access via Tailscale or VPN.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - argus-network
+
 networks:
   argus-network:
     driver: bridge
@@ -73,3 +117,8 @@ volumes:
     name: argus_brain_memory
   argus_bridge_data:
     name: argus_bridge_data
+  caddy_data:
+    name: caddy_data
+  caddy_config:
+    name: caddy_config
+

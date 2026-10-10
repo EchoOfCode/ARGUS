@@ -1,0 +1,25 @@
+# Caddyfile for ARGUS Control Plane (ADR 0004)
+# Bound to localhost loopback (127.0.0.1). Never exposed to public internet by default.
+# For remote access, route over Tailscale, WireGuard, or Cloudflare Tunnel with Access policy.
+
+:3000 {
+    reverse_proxy argus-web:3000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}
