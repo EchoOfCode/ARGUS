@@ -13,7 +13,10 @@ from fastapi.testclient import TestClient
 os.environ["ARGUS_TEST_MODE"] = "1"
 os.environ["ARGUS_SECRET"] = "valid_test_secret_32_characters_long_hex_string_12345"
 
+from db import init_schema
 from main import app
+
+init_schema()
 
 client = TestClient(app)
 SECRET = "valid_test_secret_32_characters_long_hex_string_12345"

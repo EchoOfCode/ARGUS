@@ -426,6 +426,11 @@ async def policy_evaluate_endpoint(
         cursor = conn.cursor()
         cursor.execute("SELECT tier, status FROM autopilot_rules WHERE jid = ?", (data.target_jid,))
         rule = cursor.fetchone()
+        from db import get_kill_switch_status
+        if get_kill_switch_status():
+            latency = int((time.time() - start_time) * 1000)
+            _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "kill_switch_engaged", "Global kill switch active")
+            return {"verdict": "draft_only", "reason": "Global autonomy kill switch is engaged", "tier": 0}
 
         tier = rule["tier"] if rule and rule["status"] == "active" else 0
 
@@ -439,10 +444,10 @@ async def policy_evaluate_endpoint(
             approval_id = f"appr_{int(time.time()*1000)}_{content_hash[:8]}"
             cursor.execute(
                 """
-                INSERT INTO pending_approvals (id, target_jid, content_sha256, trigger_type, expires_at, status)
-                VALUES (?, ?, ?, ?, datetime('now', '+15 minutes'), 'pending')
+                INSERT INTO pending_approvals (id, target_jid, draft_text, content_sha256, trigger_type, expires_at, status)
+                VALUES (?, ?, ?, ?, ?, datetime('now', '+15 minutes'), 'pending')
                 """,
-                (approval_id, data.target_jid, content_hash, data.trigger_type),
+                (approval_id, data.target_jid, data.message_text, content_hash, data.trigger_type),
             )
             latency = int((time.time() - start_time) * 1000)
             _log_audit(data.target_jid, data.trigger_type, 1, content_hash, latency, "requires_approval", None)
@@ -454,10 +459,23 @@ async def policy_evaluate_endpoint(
                 "expires_in_seconds": 900,
             }
 
-        # Default: Tier 0 (Draft Only)
+        # Default: Tier 0 (Draft Only - saved to inbox for human-in-the-loop review)
+        draft_id = f"draft_{int(time.time()*1000)}_{content_hash[:8]}"
+        cursor.execute(
+            """
+            INSERT INTO pending_approvals (id, target_jid, draft_text, content_sha256, trigger_type, expires_at, status)
+            VALUES (?, ?, ?, ?, ?, datetime('now', '+24 hours'), 'pending')
+            """,
+            (draft_id, data.target_jid, data.message_text, content_hash, data.trigger_type),
+        )
         latency = int((time.time() - start_time) * 1000)
         _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "draft_only", "Default Tier 0")
-        return {"verdict": "draft_only", "reason": "Contact is configured as Tier 0 (Draft Only)", "tier": 0}
+        return {
+            "verdict": "draft_only",
+            "reason": "Contact is configured as Tier 0 (Draft Only)",
+            "tier": 0,
+            "draft_id": draft_id,
+        }
 
 
 @bridge_router.post("/policy/approve")

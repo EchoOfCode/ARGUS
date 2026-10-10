@@ -192,15 +192,23 @@ def init_schema(db_path: Optional[str] = None) -> None:
                 last_replied_at TEXT
             );
 
-            -- ADR 0003: Server-side approval tokens bound to SHA-256 hash
+            -- ADR 0003 & ADR 0004: Server-side approval tokens bound to SHA-256 hash and draft content
             CREATE TABLE IF NOT EXISTS pending_approvals (
                 id TEXT PRIMARY KEY,
                 target_jid TEXT NOT NULL,
+                draft_text TEXT DEFAULT '',
                 content_sha256 TEXT NOT NULL,
                 trigger_type TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 expires_at TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending'
+            );
+
+            -- System settings (e.g. global kill switch)
+            CREATE TABLE IF NOT EXISTS system_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
             -- ADR 0003: Append-only audit log with DB triggers
@@ -225,6 +233,12 @@ def init_schema(db_path: Optional[str] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_approvals_expiry ON pending_approvals(expires_at, status);
         """)
 
+        # Migration: ensure draft_text column exists on pending_approvals if created in earlier schema
+        cursor.execute("PRAGMA table_info(pending_approvals)")
+        pa_cols = [c[1] for c in cursor.fetchall()]
+        if "draft_text" not in pa_cols and pa_cols:
+            cursor.execute("ALTER TABLE pending_approvals ADD COLUMN draft_text TEXT DEFAULT ''")
+
         # Install append-only triggers on outbound_audit_log
         cursor.execute("""
             CREATE TRIGGER IF NOT EXISTS prevent_audit_log_update
@@ -240,6 +254,43 @@ def init_schema(db_path: Optional[str] = None) -> None:
                 SELECT RAISE(ABORT, 'Audit log is append-only and cannot be deleted');
             END;
         """)
+
+
+def get_system_setting(key: str, default: str = "", db_path: Optional[str] = None) -> str:
+    """Retrieve a system setting value safely."""
+    try:
+        with get_db(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM system_settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row["value"] if row else default
+    except sqlite3.OperationalError:
+        return default
+
+
+def set_system_setting(key: str, value: str, db_path: Optional[str] = None) -> None:
+    """Upsert a system setting value."""
+    init_schema(db_path)
+    with get_db(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO system_settings (key, value, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (key, str(value)),
+        )
+
+
+def get_kill_switch_status(db_path: Optional[str] = None) -> bool:
+    """Check if the global autonomous kill switch is active."""
+    return get_system_setting("kill_switch", "0", db_path) == "1"
+
+
+def set_kill_switch_status(active: bool, db_path: Optional[str] = None) -> None:
+    """Set the global autonomous kill switch status."""
+    set_system_setting("kill_switch", "1" if active else "0", db_path)
 
 
 # ─── MESSAGE INGESTION (IDEMPOTENT) ─────────────────────────────

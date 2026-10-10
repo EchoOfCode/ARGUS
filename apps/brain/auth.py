@@ -64,3 +64,42 @@ def verify_request_auth(
         return
 
     raise HTTPException(status_code=401, detail="Missing or invalid X-Argus-Secret header")
+
+
+def get_web_access_key() -> str:
+    """Retrieve UI web access key or fallback to secret."""
+    key = os.getenv("ARGUS_WEB_ACCESS_KEY", "").strip()
+    if key:
+        return key
+    return get_secret()
+
+
+def verify_ui_auth(
+    authorization: Optional[str] = None,
+    x_argus_web_key: Optional[str] = None,
+    x_argus_secret: Optional[str] = None,
+) -> None:
+    """
+    Validate web UI owner access with constant-time comparison.
+    Accepts:
+    1. Authorization: Bearer <key>
+    2. X-Argus-Web-Key: <key>
+    3. X-Argus-Secret: <secret>
+    """
+    expected_key = get_web_access_key()
+    if not expected_key:
+        raise HTTPException(status_code=500, detail="Server web access key is not configured")
+
+    provided_token: Optional[str] = None
+    if authorization:
+        if authorization.startswith("Bearer "):
+            provided_token = authorization[7:].strip()
+        else:
+            provided_token = authorization.strip()
+    elif x_argus_web_key:
+        provided_token = x_argus_web_key.strip()
+    elif x_argus_secret:
+        provided_token = x_argus_secret.strip()
+
+    if not provided_token or not hmac.compare_digest(provided_token, expected_key):
+        raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing owner access key")
