@@ -47,9 +47,7 @@ Before running ARGUS, understand the actual architecture and trade-offs:
 
 ## 🏛️ Architecture
 
-For the complete technical specification, data schemas, and design decisions, see [**`docs/architecture.md`**](docs/architecture.md).
-
-```
+For the complete technical specification, data schemas, and design decisions, see [**`d```
                      ┌─────────────────────────────────────────┐
                      │          WhatsApp User Interface        │
                      │   (Self-Chat / Dedicated ARGUS Group)   │
@@ -59,21 +57,55 @@ For the complete technical specification, data schemas, and design decisions, se
                      ┌─────────────────────────────────────────┐
                      │          ARGUS WhatsApp Bridge          │
                      │       (apps/bridge: Node.js 20+)        │
-                     │    TypeScript / SQLite / Cron Worker    │
+                     │    Single Sender Policy Choke Point     │
                      └────────────────────┬────────────────────┘
-                                          │  HTTP + HMAC Auth (argus-network)
+                                          │  HTTP + HMAC Signed Body (ADR 0001)
                                           ▼
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    ARGUS AI BRAIN                                      │
-│                              (apps/brain: Python 3.11)                                 │
-├────────────────────┬────────────────────┬─────────────────────┬────────────────────────┤
-│ 🧠 Second Brain    │ 📬 Gmail IMAP      │ 📅 Google Calendar  │ 🎙️ Groq Whisper        │
-│ Auto-Categorizer   │ Direct Reader      │ 1-Tap Link Engine   │ Voice Transcriber      │
-├────────────────────┼────────────────────┼─────────────────────┼────────────────────────┤
-│ ⚡ Intent Router   │ 💬 3-Tier Catch-up │ 📤 Outbox Drafter   │ 🌐 Live Search         │
-│ & Fast Pre-Filters │ Conversation AI    │ Interactive Preview │ Grounding Engine       │
-└────────────────────┴────────────────────┴─────────────────────┴────────────────────────┘
+│                              ARGUS AI BRAIN (FastAPI)                                  │
+│   • Central SQLite Writer (WAL)              • ReAct Agent Tool Execution              │
+│   • Outbound Policy Engine (ADR 0003)        • Encrypted Fernet Vault (AES-128)        │
+│   • Context Isolation Boundary               • Native AG-UI Server-Sent Events Stream  │
+└─────────────────────────────────┬──────────────────────────────────┬───────────────────┘
+                                  │ Single-Writer SQLite             │ AG-UI SSE + REST (Key Auth)
+                                  ▼                                  ▼
+┌──────────────────────────────────────────────────┐ ┌───────────────────────────────────┐
+│              PERSISTENCE STORE                   │ │        ARGUS WEB CONTROL PLANE    │
+│  • argus.db (Single DB Owner)                    │ │       (apps/web: Next.js 14+)     │
+│    - outbound_audit_log (Append-Only)            │ │   • Real-Time Chat (AG-UI SSE)    │
+│    - pending_approvals (Human-in-Loop)           │ │   • Approvals Inbox (Approve/Edit)│
+│    - message_log / chat_directory / expenses     │ │   • Contacts & Autonomy (Tiers)   │
+│  • argus_memory.db (Second Brain Facts)          │ │   • Second Brain (Zero Credentials│
+│  • argus_vault.db (Encrypted Credentials)        │ │   • Ledger & System Status        │
+└──────────────────────────────────────────────────┘ └─────────────────┬─────────────────┘
+                                                                       │ Host Loopback Only
+                                                                       ▼
+                                                     ┌───────────────────────────────────┐
+                                                     │    CADDY REVERSE PROXY (Localhost)│
+                                                     │    http://127.0.0.1:3000          │
+                                                     │ (Tailscale / VPN for Remote Access)│
+                                                     └───────────────────────────────────┘
 ```
+
+---
+
+## 🖥️ ARGUS Web Control Plane (`apps/web`)
+
+Starting in Phase 3, ARGUS features a modern, single-owner web application built with **Next.js (App Router)**, **TypeScript**, and **Tailwind CSS** behind a local Caddy reverse proxy at `http://127.0.0.1:3000`.
+
+### Key Screens & Capabilities:
+1. **Chat (`/chat`)**: Real-time agent conversations powered by native **AG-UI Server-Sent Events (SSE)**, with dynamic tool invocation cards (`list_contacts`, `web_search`, `record_expense`) and generation stop/cancellation.
+2. **Approvals Inbox (`/approvals`)**: Human-in-the-loop review queue for assistant-generated outbound drafts. Every draft can be **Approved**, **Edited & Approved**, or **Declined**, automatically writing to the tamper-proof SQLite audit trail.
+3. **Contacts & Autonomy (`/contacts`)**: Granular per-contact autonomy tiers (Tier 0: Draft Only, Tier 1: Supervised 15-minute token, Tier 2: Autonomous with 8-second undo delay) and a prominent **Global Emergency Kill Switch**.
+4. **Second Brain Memory (`/memory`)**: Personal knowledge base and fact repository with **Guaranteed Zero-Credential Exposure** (sensitive credentials and vault entries are fundamentally excluded from the UI).
+5. **Financial Ledger (`/ledger`)**: Aggregated personal expenses, debt balances ("Who Owes Whom"), category breakdown, and recent transaction records.
+6. **Activity Log (`/activity`)**: Real-time chronological audit trail of outbound policy engine decisions and WhatsApp message logs.
+7. **System Status (`/status`)**: Live WhatsApp bridge link status, QR code display for initial device pairing, AI brain health, and database inventory metrics.
+
+### Security & Remote Access:
+- **Single-Owner Authentication:** Every page and API route requires authentication with `ARGUS_WEB_ACCESS_KEY` (or `ARGUS_SECRET`), protected by constant-time comparison, an `httpOnly` secure session cookie, and IP rate limiting (max 5 failed attempts per 5 minutes).
+- **Host Loopback by Default:** Bound strictly to `127.0.0.1:3000`. Never expose port 3000 or 8000 directly to the public internet.
+- **Secure Remote Access:** To access the ARGUS Web Control Plane remotely from a phone or laptop, connect via **Tailscale** (`tailscale serve` / MagicDNS) or an authenticated WireGuard/VPN tunnel.
 
 ---
 

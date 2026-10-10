@@ -30,25 +30,34 @@ ARGUS transforms personal WhatsApp into an executive AI control center. Rather t
                   ┌────────────────────────────────────────────────────────┐
                   │          WHATSAPP BRIDGE (Node.js + TypeScript)        │
                   │   • Baileys Protocol Handler  • Multi-Device Auth       │
-                  │   • Local Fast-Path Dispatch  • Media Downloader       │
-                  └─────────────┬────────────────────────────┬─────────────┘
-                                │ SQLite Reads/Writes        │ HTTP / Multipart + HMAC
-                                ▼                            ▼
-     ┌──────────────────────────────────────┐     ┌────────────────────────┐
-     │       LOCAL SQLITE DATABASES         │     │     AI BRAIN BACKEND   │
-     │   • argus.db (WAL Mode)              │◄────┤     (Python FastAPI)   │
-     │     - message_log                    │     │   • ReAct Agent Loop   │
-     │     - chat_directory                 │     │   • Tool Execution     │
-     │     - autopilot_rules                │     │   • Stylometry Engine  │
-     │     - tracked_followups              │     │   • Vision Intelligence│
-     │     - expenses                       │     │   • Groq / OpenRouter  │
-     │   • argus_memory.db (Second Brain)   │     └───────────┬────────────┘
-     └──────────────────────────────────────┘                 │
-                                                              ▼
-                                                  ┌────────────────────────┐
-                                                  │   WEB COCKPIT STUDIO   │
-                                                  │ (http://127.0.0.1:8000)│
-                                                  └────────────────────────┘
+                  │   • Ingest Journaling         • Single Send Choke Point│
+                  └───────────────────────────┬────────────────────────────┘
+                                              │ HTTP + HMAC Signature (ADR 0001)
+                                              ▼
+     ┌─────────────────────────────────────────────────────────────────────┐
+     │                      AI BRAIN BACKEND (FastAPI)                     │
+     │   • Central SQLite Writer (WAL)   • ReAct Agent Tool Execution      │
+     │   • Outbound Policy Engine        • Encrypted Fernet Vault (AES-128)│
+     │   • Context Isolation Barrier     • AG-UI Server-Sent Events Stream │
+     └───────────────┬─────────────────────────────────┬───────────────────┘
+                     │ Read/Write                      │ AG-UI SSE + REST (Auth Key)
+                     ▼                                 ▼
+     ┌───────────────────────────────┐ ┌───────────────────────────────────┐
+     │    CENTRAL PERSISTENCE        │ │        ARGUS WEB CONTROL PLANE    │
+     │  • argus.db (Single-Writer)   │ │       (apps/web: Next.js 14+)     │
+     │    - outbound_audit_log       │ │   • Chat (AG-UI SSE & Tool Cards) │
+     │    - pending_approvals        │ │   • Approvals Inbox (Human-in-Loop)│
+     │    - message_log / contacts   │ │   • Contacts & Autonomy (Tiers)   │
+     │    - expenses / ledger        │ │   • Second Brain (Zero Credentials│
+     │  • argus_memory.db            │ │   • Financial Ledger & Status     │
+     │  • argus_vault.db (Encrypted) │ └─────────────────┬─────────────────┘
+     └───────────────────────────────┘                   │ HTTP Loopback Only
+                                                         ▼
+                                       ┌───────────────────────────────────┐
+                                       │    CADDY REVERSE PROXY (Localhost)│
+                                       │    http://127.0.0.1:3000          │
+                                       │ (Tailscale / VPN for Remote Access)│
+                                       └───────────────────────────────────┘
 ```
 
 ---
