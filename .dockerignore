@@ -2,6 +2,13 @@
 # ARGUS — Docker Build Context Ignore
 # ===================================================================
 
+# Secrets & Environment Files
+.env
+.env.*
+*.env
+backend/.env
+bridge/.env
+
 .git
 .gitignore
 .vscode

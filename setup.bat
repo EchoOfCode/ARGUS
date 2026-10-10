@@ -70,7 +70,7 @@ if "%PROVIDER_CHOICE%"=="2" (
 )
 
 set /p PHONE_NUMBER="Enter your WhatsApp Phone Number with Country Code (no +, no spaces, e.g. 919876543210): "
-if "%PHONE_NUMBER%"=="" set PHONE_NUMBER=918088421593
+if "%PHONE_NUMBER%"=="" set PHONE_NUMBER=919876543210
 
 :: Optional: Gmail Integration
 echo.
@@ -85,7 +85,8 @@ if /i "%CONFIGURE_GMAIL%"=="y" (
 )
 
 :: Generate 32-byte secret
-set ARGUS_SECRET=5f3668d3b40f49f9fc3dc9d02b55b96bc797023b76a327b597900c04aa5ce2ac
+set ARGUS_SECRET=change-me-generate-with-openssl-rand-hex-32
+for /f "delims=" %%i in ('python -c "import secrets; print(secrets.token_hex(32))" 2^>nul') do set ARGUS_SECRET=%%i
 
 :: 4. Write backend/.env
 echo [3/4] Writing backend/.env...
