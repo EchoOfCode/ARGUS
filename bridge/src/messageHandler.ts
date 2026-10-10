@@ -308,7 +308,7 @@ export async function handleMessage(
             `📇 *Contact Address Book Synced!*`,
             `────────────────────────────`,
             `✅ Successfully imported *${res.imported}* contacts into ARGUS!`,
-            `💡 You can now text or message any of them directly by name (e.g. _"tell Harshith I am on my way"_).`,
+            `💡 You can now text or message any of them directly by name (e.g. _"tell Alex I am on my way"_).`,
           ].join("\n"),
           config
         );

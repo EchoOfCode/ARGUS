@@ -51,9 +51,9 @@ def test_intent_classification():
     res = client.post(
         "/process-message",
         json={
-            "sender_jid": "918088421593@s.whatsapp.net",
+            "sender_jid": "15550100@s.whatsapp.net",
             "message_text": "unread emails",
-            "chat_jid": "918088421593@s.whatsapp.net",
+            "chat_jid": "15550100@s.whatsapp.net",
             "timestamp": "2026-08-22T10:00:00Z",
             "is_self_chat": True,
         },
@@ -104,9 +104,9 @@ def test_autopilot_endpoint():
     res = client.post(
         "/autopilot/generate-reply",
         json={
-            "chat_jid": "918088421593@s.whatsapp.net",
-            "sender_name": "Harshith",
-            "incoming_message": "Hey bro, are you coming to college today?",
+            "chat_jid": "15550100@s.whatsapp.net",
+            "sender_name": "Alex",
+            "incoming_message": "Hey, are we still meeting today?",
             "custom_instruction": "busy working on project demo",
         },
         headers=HEADERS,

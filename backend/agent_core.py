@@ -352,7 +352,7 @@ AGENT_TOOLS = [
                 "type": "object",
                 "properties": {
                     "prefix": {"type": "string", "description": "Starting letter, e.g. 'b' or 'm'"},
-                    "search": {"type": "string", "description": "Name search substring, e.g. 'harshith'"},
+                    "search": {"type": "string", "description": "Name search substring, e.g. 'alex'"},
                 },
             },
         },
@@ -471,7 +471,7 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "record_expense",
-            "description": "Log an expense, lending, or borrowed money in the ledger. E.g. 'Paid 450 for lunch' or 'Harshith owes me 200 for uber'.",
+            "description": "Log an expense, lending, or borrowed money in the ledger. E.g. 'Paid 450 for lunch' or 'Alex owes me 200 for taxi'.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -556,7 +556,7 @@ You have direct, real-time access to the user's WhatsApp contacts database, cros
 Second Brain memory vault, todos, reminders, and live web search.
 
 CORE CAPABILITIES & AGI PERSONALITY:
-1. MULTI-ACTION COMPOSITE EXECUTION: If the user gives multi-part requests (e.g. "tell Harshith I'll be there and schedule our sync tomorrow at 5pm and remind me to bring laptop"), \
+1. MULTI-ACTION COMPOSITE EXECUTION: If the user gives multi-part requests (e.g. "tell Alex I'll be there and schedule our sync tomorrow at 5pm and remind me to bring laptop"), \
    YOU MUST EXECUTE ALL TOOLS in sequence (draft_whatsapp_message + schedule_event + create_reminder) and present a clean unified summary.
 2. GROUND-TRUTH ONLY: NEVER hallucinate contacts, messages, or schedules. Always query SQLite tools.
 3. CONVERSATIONAL CONTINUITY: Understand follow-up requests (e.g. "starting with b", "what about him?", "reschedule that") using conversation history.
@@ -678,7 +678,7 @@ Analyze the message text and extract IMPORTANT personal facts, preferences, rela
 project roles, family details, or schedules.
 
 EXAMPLES OF FACTS TO EXTRACT:
-- "Harshith is my teammate for SIH" -> category: "People", fact: "Harshith is on Yusuf's SIH team"
+- "Alex is my project partner" -> category: "People", fact: "Alex is the project partner"
 - "I have DSA class on Mondays" -> category: "Academics", fact: "Has DSA class on Mondays"
 - "Prefers evening calls after 6pm" -> category: "Preferences", fact: "Prefers calls after 6pm"
 - "My sister's birthday is Oct 14" -> category: "People", fact: "Sister's birthday is October 14"

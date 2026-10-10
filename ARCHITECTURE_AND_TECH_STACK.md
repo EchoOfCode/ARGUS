@@ -123,7 +123,7 @@ ARGUS transforms personal WhatsApp into an executive AI control center. Rather t
   * **Dedicated Command Room:** Operates inside a private group named **`ARGUS`** where all user commands, document drops, and status mirror cards are routed.
   * **Fast-Path Local Routing:** Common operations (mute, unmute, help, status) resolve in < 1ms locally without waiting for LLM roundtrips.
   * **Multi-Turn Context Buffer:** Retains the last 8 messages of conversation history to handle conversational follow-ups (e.g. *"starting with b"*, *"tell him that"*).
-  * **`@lid` & Fuzzy Contact Resolution:** Handles modern WhatsApp Linked Identity JIDs (`186221745680633@lid`) and maps full contact names (e.g., *"Harshith"* matches *"Harshith Nadella"*).
+  * **`@lid` & Fuzzy Contact Resolution:** Handles modern WhatsApp Linked Identity JIDs (`100000000000001@lid`) and maps full contact names (e.g., *"Alex"* matches *"Alex Morgan"*).
 
 ### 4. Multimodal Document & Vision Intelligence
 * **Location:** [`backend/vision_doc_analyzer.py`](file:///e:/ARGUS/backend/vision_doc_analyzer.py)
@@ -139,7 +139,7 @@ ARGUS transforms personal WhatsApp into an executive AI control center. Rather t
 
 ### 6. "Ghosted" Follow-Up Tracker & Financial Split Ledger
 * **Follow-up Tracker:** Tracks 1-on-1 outgoing messages and flags contacts who have not replied after 12–24 hours. Provides `nudge [contact]` for 1-tap pings.
-* **Financial Split Ledger:** Conversational expense logging (*"Paid 450 for lunch with Chinmay"* / *"Harshith owes me 200 for uber"*). Provides `expenses` and `who owes me` balance sheets.
+* **Financial Split Ledger:** Conversational expense logging (*"Paid 450 for lunch with Taylor"* / *"Alex owes me 200 for taxi"*). Provides `expenses` and `who owes me` balance sheets.
 
 ### 7. Web Cockpit Dashboard
 * **Location:** [`backend/dashboard.py`](file:///e:/ARGUS/backend/dashboard.py) (Running at `http://localhost:8000/dashboard`)

@@ -66,7 +66,7 @@ let cachedEmails: Array<{ id: string; subject: string; sender: string; date: str
  */
 interface ConversationSession {
   action:
-    | "awaiting_message_text"      // user said "text Harshith" → waiting for the message body
+    | "awaiting_message_text"      // user said "text Alex" → waiting for the message body
     | "awaiting_draft_details";    // user said "frame a message" → waiting for recipient/purpose/tone
   targetJid?: string;
   targetName?: string;
@@ -159,8 +159,8 @@ export async function handleSelfChatMessage(
       }
 
       // Parse the multi-line or single-line details.
-      // User might say: "harshith\npurpose is to meet tmr at cubbon park\ntone is Humour"
-      // Or: "harshith about meeting at cubbon park tomorrow, humorous tone"
+      // User might say: "alex\npurpose is to meet tmr at central park\ntone is Humour"
+      // Or: "alex about meeting at central park tomorrow, humorous tone"
       const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
 
       let recipientStr = "";
@@ -183,7 +183,7 @@ export async function handleSelfChatMessage(
           }
         }
       } else {
-        // Single-line: try to parse "harshith about meeting at cubbon park"
+        // Single-line: try to parse "alex about meeting at central park"
         const singleLine = text.trim();
         const aboutMatch = singleLine.match(/^(.+?)\s+(about|regarding|for|that)\s+(.+)$/i);
         if (aboutMatch) {
@@ -630,7 +630,7 @@ export async function handleSelfChatMessage(
   if (["expenses", "my expenses", "spending", "expense list", "show expenses"].includes(normalized)) {
     const summary = getExpensesSummary("month");
     if (summary.expenses.length === 0) {
-      await sendText(sock, chatJid, "💸 *No expenses recorded this month.* To log one: _'Paid 350 for lunch with Chinmay'_", config);
+      await sendText(sock, chatJid, "💸 *No expenses recorded this month.* To log one: _'Paid 350 for lunch with Taylor'_", config);
     } else {
       const items = summary.expenses.slice(0, 10).map((e: ExpenseRecord) => `• ₹${e.amount} — *${e.description}* (${e.category})`).join("\n");
       await sendText(
@@ -1120,7 +1120,7 @@ async function handleChatCatchup(sock: WASocket, chatJid: string, target: string
       await sendText(
         sock,
         chatJid,
-        `🔍 Could not find any group or contact matching "*${target}*".\n\n_Tip: Type "catchup noclue" or "catchup College"._`,
+        `🔍 Could not find any group or contact matching "*${target}*".\n\n_Tip: Type "catchup Project Team" or "catchup Study Group"._`,
         config
       );
       return;
@@ -1190,7 +1190,7 @@ async function handleChatCatchup(sock: WASocket, chatJid: string, target: string
 
 async function handleSaveMemory(sock: WASocket, chatJid: string, fact: string, config: Config) {
   if (!fact) {
-    await sendError(sock, chatJid, "What fact would you like me to remember? Example: *remember my SRN is PES1UG25CS001*", config);
+    await sendError(sock, chatJid, "What fact would you like me to remember? Example: *remember my student ID is ABC123XYZ*", config);
     return;
   }
   try {
@@ -1236,7 +1236,7 @@ async function handleListMemories(sock: WASocket, chatJid: string, config: Confi
       await sendText(
         sock,
         chatJid,
-        "🧠 *Your Second Brain is currently empty.*\n\n_To store facts, simply type:_ *remember [fact]* (e.g. *remember my SRN is PES1UG25CS001*)",
+        "🧠 *Your Second Brain is currently empty.*\n\n_To store facts, simply type:_ *remember [fact]* (e.g. *remember my student ID is ABC123XYZ*)",
         config
       );
       return;
@@ -1375,7 +1375,7 @@ async function handleOutgoingMessageCommand(
   let target = "";
   let rawContent = "";
 
-  // 1. Pattern: "send [message] to [target]" (e.g. `send "hello" to Harshith`)
+  // 1. Pattern: "send [message] to [target]" (e.g. `send "hello" to Alex`)
   const sendMsgToTargetMatch = text.match(/^(?:can\s+u\s+|please\s+)?(?:send|text|dm|msg|message)\s+(?:["']([^"']+)["']|(.+?))\s+to\s+([a-zA-Z0-9_\-\.\s]+)$/i);
   if (sendMsgToTargetMatch) {
     rawContent = (sendMsgToTargetMatch[1] || sendMsgToTargetMatch[2]).trim();
@@ -1396,13 +1396,13 @@ async function handleOutgoingMessageCommand(
       await sendText(
         sock,
         chatJid,
-        `📝 *Draft Mode*\n\nWho's the recipient, what's the purpose, and what tone?\n\n_Example:_\nHarshith\npurpose is to meet tmr at cubbon park\ntone is humour\n\n_Or type *cancel* to abort._`,
+        `📝 *Draft Mode*\n\nWho's the recipient, what's the purpose, and what tone?\n\n_Example:_\nAlex\npurpose is to meet tmr at central park\ntone is humour\n\n_Or type *cancel* to abort._`,
         config
       );
       return true;
     }
 
-    // If user only typed contact name e.g. "I wanna text Harshith" or "text Harshith"
+    // If user only typed contact name e.g. "I wanna text Alex" or "text Alex"
     const singleContact = findChatByNameOrQuery(cleanCmd);
     if (singleContact && !cleanCmd.includes(":") && cleanCmd.split(" ").length <= 2) {
       activeSession = {
@@ -1420,7 +1420,7 @@ async function handleOutgoingMessageCommand(
       return true;
     }
 
-    // If there's a colon or hyphen e.g. "Harshith: let's meet at 7"
+    // If there's a colon or hyphen e.g. "Alex: let's meet at 7"
     const colonOrDashMatch = cleanCmd.match(/^([a-zA-Z0-9_\.\s]{1,30}?)\s*[:\-–—]\s*(.+)$/);
     if (colonOrDashMatch) {
       target = colonOrDashMatch[1].trim();
@@ -1443,7 +1443,7 @@ async function handleOutgoingMessageCommand(
     return false;
   }
 
-  // If user only gave a target contact (e.g. "Harshith" with no content)
+  // If user only gave a target contact (e.g. "Alex" with no content)
   if (target && !rawContent) {
     const foundTarget = findChatByNameOrQuery(target);
     if (foundTarget) {
@@ -1526,7 +1526,7 @@ async function handleListContacts(sock: WASocket, chatJid: string, config: Confi
     const lines = contacts.map((c) => `👤 *${c.name}*`);
     sections.push(`👤 *Saved Contacts:*\n${lines.join("\n")}`);
   } else {
-    sections.push(`👤 *Saved Contacts:*\n_None yet. To save a contact: type "save contact Harshith +919876543210"_`);
+    sections.push(`👤 *Saved Contacts:*\n_None yet. To save a contact: type "save contact Alex +15550100"_`);
   }
 
   if (groups.length > 0) {
@@ -1545,7 +1545,7 @@ async function handleSaveContact(sock: WASocket, chatJid: string, raw: string, c
     await sendError(
       sock,
       chatJid,
-      "Format: *save contact [Name] [Phone]*\nExample: *save contact Harshith 919876543210*",
+      "Format: *save contact [Name] [Phone]*\nExample: *save contact Alex 919876543210*",
       config
     );
     return;
@@ -1684,7 +1684,7 @@ async function handleScheduleEvent(sock: WASocket, chatJid: string, raw: string,
     await sendError(
       sock,
       chatJid,
-      "Could not parse event date or time.\nExample: *schedule Meeting with Harshith tomorrow at 4pm*",
+      "Could not parse event date or time.\nExample: *schedule Meeting with Alex tomorrow at 4pm*",
       config
     );
   } catch (err) {
@@ -1701,7 +1701,7 @@ async function handleAutopilotStatus(sock: WASocket, chatJid: string, config: Co
       ``,
       `*How to enable:*`,
       `• *autopilot on for [Contact]* — Auto-replies as you to that person`,
-      `  _Example:_ *autopilot on for Harshith*`,
+      `  _Example:_ *autopilot on for Alex*`,
       `• *autopilot on: [reason]* — Global busy mode for all 1-on-1 DMs`,
       `  _Example:_ *autopilot on: studying for exams, reply casually*`,
     ].join("\n");

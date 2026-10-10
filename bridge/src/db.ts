@@ -796,7 +796,7 @@ export function getActiveAutopilotRule(
       if (cleanPhone === cleanRuleJid || cleanSenderPhone === cleanRuleJid) return rule;
     }
 
-    // 2. Exact or Substring Name Match (handles "Harshith" matching "Harshith Nadella", @lid chats)
+    // 2. Exact or Substring Name Match (handles "Alex" matching "Alex Morgan", @lid chats)
     if (cleanRuleName.length >= 3) {
       if (cleanSenderName && (cleanSenderName.includes(cleanRuleName) || cleanRuleName.includes(cleanSenderName))) {
         return rule;
