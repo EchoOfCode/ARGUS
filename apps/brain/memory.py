@@ -45,28 +45,43 @@ def init_memory_db():
 init_memory_db()
 
 
+SENSITIVE_CATEGORIES = ("credentials", "credential", "password", "secret", "keys", "tokens")
+
+
 def save_memory(fact: str, category: str = "general", entities: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Store a fact with category and entity tags in memory."""
+    """Store a fact with category and entity tags in memory. Credentials are automatically routed to encrypted vault."""
+    clean_cat = category.lower().strip()
+    if clean_cat in SENSITIVE_CATEGORIES:
+        from vault import store_credential
+        store_credential(name=f"cred_{len(fact)}", value=fact.strip(), hint=f"Secured under category {clean_cat}")
+        return {
+            "id": -1,
+            "fact_text": "[ENCRYPTED CREDENTIAL MOVED TO VAULT]",
+            "category": "vault",
+            "entities": entities or [],
+            "status": "encrypted",
+        }
+
     entities_json = json.dumps(entities or [])
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute(
             """INSERT INTO memories (fact_text, category, entities, updated_at) 
                VALUES (?, ?, ?, CURRENT_TIMESTAMP)""",
-            (fact.strip(), category.lower(), entities_json),
+            (fact.strip(), clean_cat, entities_json),
         )
         conn.commit()
         memory_id = cursor.lastrowid
         return {
             "id": memory_id,
             "fact_text": fact.strip(),
-            "category": category.lower(),
+            "category": clean_cat,
             "entities": entities or [],
         }
 
 
 def recall_memories(query: str, limit: int = 8) -> List[Dict[str, Any]]:
-    """Ranked search across fact text, categories, and entities."""
+    """Ranked search across fact text, categories, and entities. Credentials are strictly excluded."""
     raw_words = [w.strip().lower() for w in query.split() if len(w.strip()) > 1]
     # Filter common question stop words
     stop_words = {"what", "is", "my", "the", "where", "who", "did", "put", "have", "are", "tell", "me", "about", "recall"}
@@ -89,13 +104,16 @@ def recall_memories(query: str, limit: int = 8) -> List[Dict[str, Any]]:
             p = f"%{w}%"
             params.extend([p, p, p])
 
+        placeholders = ",".join("?" for _ in SENSITIVE_CATEGORIES)
         sql = f"""
             SELECT id, fact_text, category, entities, created_at
             FROM memories
-            WHERE {' OR '.join(clauses)}
+            WHERE ({' OR '.join(clauses)})
+              AND LOWER(category) NOT IN ({placeholders})
             ORDER BY id DESC
             LIMIT ?
         """
+        params.extend(SENSITIVE_CATEGORIES)
         params.append(limit)
         rows = cursor.execute(sql, params).fetchall()
         results = []
@@ -110,13 +128,14 @@ def recall_memories(query: str, limit: int = 8) -> List[Dict[str, Any]]:
 
 
 def list_recent_memories(limit: int = 15) -> List[Dict[str, Any]]:
-    """List recent memories."""
+    """List recent memories excluding credentials."""
+    placeholders = ",".join("?" for _ in SENSITIVE_CATEGORIES)
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         rows = cursor.execute(
-            "SELECT id, fact_text, category, entities, created_at FROM memories ORDER BY id DESC LIMIT ?",
-            (limit,),
+            f"SELECT id, fact_text, category, entities, created_at FROM memories WHERE LOWER(category) NOT IN ({placeholders}) ORDER BY id DESC LIMIT ?",
+            (*SENSITIVE_CATEGORIES, limit),
         ).fetchall()
         results = []
         for r in rows:
@@ -130,12 +149,14 @@ def list_recent_memories(limit: int = 15) -> List[Dict[str, Any]]:
 
 
 def get_memories_by_category() -> Dict[str, List[Dict[str, Any]]]:
-    """Get all stored memories grouped by category for the Second Brain viewer."""
+    """Get all stored memories grouped by category for the Second Brain viewer (excluding credentials)."""
+    placeholders = ",".join("?" for _ in SENSITIVE_CATEGORIES)
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         rows = cursor.execute(
-            "SELECT id, fact_text, category, entities, created_at FROM memories ORDER BY category ASC, id DESC"
+            f"SELECT id, fact_text, category, entities, created_at FROM memories WHERE LOWER(category) NOT IN ({placeholders}) ORDER BY category ASC, id DESC",
+            SENSITIVE_CATEGORIES,
         ).fetchall()
 
         grouped: Dict[str, List[Dict[str, Any]]] = {}

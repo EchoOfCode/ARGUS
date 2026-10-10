@@ -35,7 +35,7 @@ class BrainSettings(BaseSettings):
     argus_port: int = Field(default=8000, alias="ARGUS_PORT")
 
     # ─── LLM Provider Settings ─────────────────────────────────
-    llm_provider: Literal["groq", "openrouter", "openai", "ollama", "custom"] = Field(
+    llm_provider: Literal["groq", "openrouter", "openai", "ollama", "custom", "mock"] = Field(
         default="groq",
         alias="LLM_PROVIDER",
     )

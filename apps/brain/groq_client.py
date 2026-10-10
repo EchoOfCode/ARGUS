@@ -67,11 +67,14 @@ def _get_provider_config() -> Tuple[str, str, Optional[str], Dict[str, str], str
     return "groq", api_key, base_url, {}, model
 
 
-def _get_client() -> OpenAI:
+def _get_client() -> Any:
     """Get an OpenAI-compatible client configured for the selected provider."""
     provider, api_key, base_url, headers, _ = _get_provider_config()
 
     if not api_key and provider != "ollama":
+        if os.getenv("ARGUS_TEST_MODE") == "1" or provider == "mock":
+            from llm_provider import MockLLMProvider
+            return MockLLMProvider()
         raise RuntimeError(
             f"No API key configured for provider '{provider}'. "
             "Please set OPENROUTER_API_KEY, GROQ_API_KEY, OPENAI_API_KEY, or LLM_API_KEY in backend/.env"
@@ -567,7 +570,16 @@ RULES:
             history_lines.append(f"{sender_label}: {msg.get('text') or msg.get('message_text')}")
         context_parts.append("Recent Chat History:\n" + "\n".join(history_lines))
 
-    context_parts.append(f"Incoming Message to reply to from {sender_name}:\n\"{incoming_message}\"")
+    # Phase 2 Task 4 & Task 5: Context isolation & untrusted input delimiters
+    from context_isolation import UNTRUSTED_END_TAG, UNTRUSTED_START_TAG, sanitize_untrusted_text
+
+    sanitized_msg = sanitize_untrusted_text(incoming_message)
+    context_parts.append(
+        f"Incoming Message to reply to from {sender_name}:\n"
+        f"{UNTRUSTED_START_TAG}\n"
+        f"{sanitized_msg}\n"
+        f"{UNTRUSTED_END_TAG}"
+    )
     user_prompt = "\n\n".join(context_parts)
 
     try:
