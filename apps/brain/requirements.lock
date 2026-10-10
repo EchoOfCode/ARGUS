@@ -26,3 +26,5 @@ starlette==0.38.2
 typing_extensions==4.12.2
 uvicorn==0.30.6
 openai==1.40.0
+sqlalchemy==2.1.4
+alembic==1.20.0

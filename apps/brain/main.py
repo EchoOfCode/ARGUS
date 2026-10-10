@@ -103,15 +103,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger("argus.api")
 
+from contextlib import asynccontextmanager
+
+from api_bridge import bridge_router
+from auth import verify_request_auth
 from dashboard import dashboard_router
+from db import init_schema
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Ensure database schema is initialized with WAL pragmas on startup
+    init_schema()
+    yield
 
 app = FastAPI(
     title="ARGUS AI Brain",
     description="Multi-capability executive AI assistant backend",
     version="2.1.0",
+    lifespan=lifespan,
 )
 
 app.include_router(dashboard_router)
+app.include_router(bridge_router)
 
 # Load shared secret with fail-fast validation
 from config import get_settings
@@ -127,12 +141,12 @@ except Exception as err:
 
 
 def verify_secret(x_argus_secret: str | None) -> None:
-    """Validate the X-Argus-Secret header."""
-    secret = ARGUS_SECRET or os.getenv("ARGUS_SECRET", "")
-    if not secret or x_argus_secret != secret:
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid X-Argus-Secret header"
-        )
+    """Validate the X-Argus-Secret header with constant-time comparison."""
+    verify_request_auth(
+        body_bytes=b"",
+        legacy_secret_header=x_argus_secret,
+        secret_override=ARGUS_SECRET or os.getenv("ARGUS_SECRET", ""),
+    )
 
 
 # ─── Intent Classification ──────────────────────────────────────

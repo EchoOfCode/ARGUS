@@ -30,6 +30,10 @@ auth_info/
 *.db-shm
 *.sqlite
 *.sqlite3
+*.bak*
+data/
+apps/brain/data/
+apps/bridge/data/
 apps/brain/argus_memory.db
 apps/bridge/argus.db
 *.log
