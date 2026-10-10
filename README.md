@@ -61,17 +61,17 @@
 ## ✨ Key Features
 
 ### 🧠 1. Cognitive "Second Brain" Memory
-* **Auto-Categorization & Tagging:** Say *"remember my SRN is PES1UG25CS001 and I am in Section E"* — ARGUS auto-classifies it under `#academics` with tags `#srn #section`.
-* **Conversational Synthesis:** Ask *"what is my SRN and section?"* and ARGUS returns a direct, highlighted answer.
+* **Auto-Categorization & Tagging:** Say *"remember my student ID is ABC123XYZ and I am in Section 4"* — ARGUS auto-classifies it under `#academics` with tags `#id #section`.
+* **Conversational Synthesis:** Ask *"what is my student ID and section?"* and ARGUS returns a direct, highlighted answer.
 * **Knowledge Dashboard:** Type `memories` or `brain` to view your categorized knowledge graph (🎓 Academics, 👥 People, 🔐 Credentials, 👤 Personal, 💻 Projects).
 
 ### 📤 2. Outbound Message Dispatch & AI Drafter
-* **Dispatch to Any Group or Contact:** *"Tell noclue I will be 15 minutes late"* or *"Can you send message to Harshith about moving meeting to 7"*.
+* **Dispatch to Any Group or Contact:** *"Tell Jordan I will be 15 minutes late"* or *"Can you send message to Alex about moving meeting to 7"*.
 * **Context-Aware AI Drafting:** ARGUS writes a polite draft adapted to the recipient and sends a WhatsApp preview card.
 * **Full Interactive Control:** Reply `yes` (send now), `edit [new text]` (modify draft), or `cancel` (discard).
 
 ### 💬 3. All-Chats Ingestion & 3-Tier Catch-up
-* **Smart Summaries:** Type `catchup Section E` or `summarize group`.
+* **Smart Summaries:** Type `catchup Project Team` or `summarize group`.
 * **Structured 3-Tier Output:**
   1. 📌 **Key Discussions & Announcements**
   2. 🔗 **Links, Resources & Questions**
@@ -92,7 +92,7 @@
 * Voice notes are automatically transcribed via Groq Whisper (`whisper-large-v3`) and executed instantly.
 
 ### 🤖 7. Auto-Pilot Digital Clone Persona
-* **Autonomous 1-on-1 Auto-Responder:** Turn on auto-pilot for specific contacts or global busy periods (`autopilot on for Harshith` or `autopilot on: studying for exams`).
+* **Autonomous 1-on-1 Auto-Responder:** Turn on auto-pilot for specific contacts or global busy periods (`autopilot on for Alex` or `autopilot on: studying for exams`).
 * **Persona & Tone Matching:** Reads past conversation history and your Second Brain knowledge base to reply in your personal, authentic texting style.
 * **Transparent Activity Mirror:** Every auto-pilot response is mirrored back to your `ARGUS` command group in real-time.
 * **Realistic Typing Simulation:** Emulates real-world typing indicators (`composing`) with dynamic natural delays.
@@ -119,6 +119,16 @@ git clone https://github.com/your-username/ARGUS.git
 cd ARGUS
 ```
 
+#### Generating a Shared Secret:
+Generate a secure 32-byte hexadecimal secret for `ARGUS_SECRET` (used by both backend and bridge):
+```bash
+# On Linux / macOS / Git Bash:
+openssl rand -hex 32
+
+# On Windows (PowerShell or Command Prompt with Python):
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
 #### Configure Backend Environment:
 Copy `backend/.env.example` to `backend/.env`:
 ```bash
@@ -127,8 +137,8 @@ cp backend/.env.example backend/.env
 Edit `backend/.env`:
 ```ini
 GROQ_API_KEY=gsk_your_actual_groq_api_key
-GROQ_MODEL=openai/gpt-oss-120b
-ARGUS_SECRET=5f3668d3b40f49f9fc3dc9d02b55b96bc797023b76a327b597900c04aa5ce2ac
+GROQ_MODEL=llama-3.3-70b-versatile
+ARGUS_SECRET=change-me-generate-with-openssl-rand-hex-32
 EMAIL_USER=your_email@gmail.com
 EMAIL_PASS=your_16_character_app_password
 ```
@@ -142,7 +152,7 @@ Edit `bridge/.env`:
 ```ini
 MY_JID=91XXXXXXXXXX@s.whatsapp.net
 AI_BRAIN_URL=http://127.0.0.1:8000
-ARGUS_SECRET=5f3668d3b40f49f9fc3dc9d02b55b96bc797023b76a327b597900c04aa5ce2ac
+ARGUS_SECRET=change-me-generate-with-openssl-rand-hex-32
 DEDICATED_GROUP_NAME=ARGUS
 ```
 
@@ -171,8 +181,8 @@ Double click **`start.bat`** (or run `.\start.bat` in terminal).
 
 #### On macOS / Linux:
 ```bash
-# Terminal 1: Start Backend
-cd backend && uvicorn main:app --host 0.0.0.0 --port 8000
+# Terminal 1: Start Backend (Bound to localhost)
+cd backend && uvicorn main:app --host 127.0.0.1 --port 8000
 
 # Terminal 2: Start Bridge
 cd bridge && npm start
@@ -212,22 +222,22 @@ docker attach argus-bridge
 
 | Category | Command / Natural Language Example | Description |
 | :--- | :--- | :--- |
-| **🧠 Second Brain** | `remember my SRN is PES1UG25CS001` | Saves & auto-tags personal facts |
-| | `what is my SRN?` / `who is Harshith?` | Synthesizes instant direct answers |
+| **🧠 Second Brain** | `remember my student ID is ABC123XYZ` | Saves & auto-tags personal facts |
+| | `what is my student ID?` / `who is Alex?` | Synthesizes instant direct answers |
 | | `memories` / `my brain` | Displays full categorized knowledge base |
-| | `forget #1` / `forget wifi password` | Removes outdated facts |
-| **📤 Outbound Dispatch** | `tell noclue I'll be 10 minutes late` | AI drafts message & prompts confirmation |
-| | `can u send message to Harshith about moving meeting to 7` | Polishes draft, previews card & dispatches |
-| | `save contact Harshith 918088421593` | Adds contact to directory |
+| | `forget #1` / `forget project deadline` | Removes outdated facts |
+| **📤 Outbound Dispatch** | `tell Jordan I'll be 10 minutes late` | AI drafts message & prompts confirmation |
+| | `can u send message to Alex about moving meeting to 7` | Polishes draft, previews card & dispatches |
+| | `save contact Alex 919876543210` | Adds contact to directory |
 | | `contacts` | Lists all synced groups and contacts |
 | **💬 Group Catch-up** | `summarize group` / `catchup` | Summarizes most active recent chat |
-| | `catchup Section E` | 3-tier structured summary of specific chat |
+| | `catchup Project Team` | 3-tier structured summary of specific chat |
 | **📬 Emails (IMAP)** | `read my emails` / `emails` | Fetches recent unread emails |
 | | `summarize email #1` | Deep executive breakdown of specific email |
 | | `search email invoice` | Queries inbox via IMAP |
-| **🤖 Auto-Pilot Persona** | `autopilot on for Harshith` | Auto-replies as you in your voice to that contact |
+| **🤖 Auto-Pilot Persona** | `autopilot on for Alex` | Auto-replies as you in your voice to that contact |
 | | `autopilot on: studying for exams` | Global busy auto-responder for all DMs |
-| | `autopilot off` / `autopilot off Harshith` | Disables auto-pilot |
+| | `autopilot off` / `autopilot off Alex` | Disables auto-pilot |
 | | `autopilot status` / `autopilot` | Views active auto-pilot rules & stats |
 | **📅 Calendar & Events** | `schedule Project Review tomorrow at 4pm` | Generates 1-tap Google Calendar add link |
 | | `events` / `calendar` | Views upcoming schedule |
@@ -241,12 +251,21 @@ docker attach argus-bridge
 
 ## 🔒 Security & Privacy
 
-* **Zero Cloud Storage:** All message logs, contact directories, and Second Brain memories are stored exclusively in your local SQLite databases.
-* **Airtight `.gitignore`:** All session keys (`auth_info/`), credentials (`.env`), and database files (`*.db`) are strictly excluded from git tracking.
+* **Local Data Storage:** All message logs, contact directories, and Second Brain memories are stored locally on your machine in SQLite databases (`argus.db` and `argus_memory.db`).
+* **Cloud AI Inference:** By default, LLM inference and voice transcription run via Groq Cloud APIs. When features are used, relevant message text, voice audio, or email snippets are sent to the provider over TLS. (Local providers such as Ollama or custom endpoints can be configured in `.env` if cloud inference is not desired).
 * **Internal Shared Secret:** API communication between the Bridge and AI Brain is secured with an HMAC `X-Argus-Secret` authentication header.
+* **Strict `.gitignore` & `.dockerignore`:** Session keys (`auth_info/`), credentials (`.env`), and database files (`*.db`) are excluded from version control and container builds.
+
+---
+
+## ⚠️ Risks & Considerations
+
+* **Unofficial WhatsApp Client:** ARGUS uses `@whiskeysockets/baileys` to communicate with WhatsApp Web protocols. Using unofficial clients carries a risk of account suspension or ban by WhatsApp. ARGUS includes built-in rate-limiting delays to mitigate rapid messaging patterns, but use of this software is at your own risk.
+* **Auto-Pilot Persona Impersonation:** When Auto-Pilot is enabled, ARGUS automatically drafts and sends messages acting in your name. Keep auto-pilot restricted to specific contacts or enable supervised approval.
+* **Sensitive Credentials Caution:** Do NOT store sensitive passwords, API keys, private credentials, or payment details in the Second Brain memory vault. The memory vault is searchable by the LLM during conversational synthesis.
 
 ---
 
 ## 📜 License
 
-This project is licensed under the **MIT License**. Created with ❤️ by **Yusuf**.
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details. Created with ❤️ by **Mohammed Yusuf Ahmed (Yusuf)**.
