@@ -2,24 +2,17 @@
 
 # 🤖 ARGUS
 ### **Autonomous Real-time General Utility System**
-*Your Personal AI Executive Assistant, Second Brain & Communication Hub on WhatsApp.*
+*A self-hosted personal AI executive assistant, second brain & communication hub inside WhatsApp.*
 
-[![Website](https://img.shields.io/badge/Website-get--argus.vercel.app-000000.svg?logo=vercel&logoColor=white)](https://get-argus.vercel.app)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/EchoOfCode/ARGUS/actions/workflows/ci.yml/badge.svg)](https://github.com/EchoOfCode/ARGUS/actions/workflows/ci.yml)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Baileys](https://img.shields.io/badge/WhatsApp-Baileys%20v6.7-25D366.svg?logo=whatsapp&logoColor=white)](https://github.com/WhiskeySockets/Baileys)
 [![Groq](https://img.shields.io/badge/AI%20Inference-Groq%20Cloud-F55036.svg)](https://groq.com)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](https://docker.com)
 
-[🌐 **Live Website**](https://get-argus.vercel.app) • [Features](#-key-features) • [Quickstart](#-quickstart-guide) • [Docker Deployment](#-docker-deployment) • [Command Cheatsheet](#-command-cheatsheet) • [Architecture](#-architecture)
-
-<br/>
-
-<picture>
-  <source srcset="assets/argus_demo.webp" type="image/webp">
-  <img src="assets/argus_demo.gif" alt="ARGUS Apple Keynote Showcase" width="100%" style="border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.1); border: 1px solid #e2e8f0;" />
-</picture>
+[Overview](#-overview) • [Honest Risks](#-honest-risks--limitations) • [Architecture](#-architecture) • [Quickstart](#-quickstart-docker-first) • [Configuration](#-configuration-reference) • [Command Cheatsheet](#-command-cheatsheet) • [Troubleshooting](#-troubleshooting)
 
 </div>
 
@@ -27,9 +20,34 @@
 
 ## 🌟 Overview
 
-> 🌐 **Interactive Web Showcase:** Experience the live architecture, command playground, and deployment visualizer at **[get-argus.vercel.app](https://get-argus.vercel.app)**.
+**ARGUS** is an executive personal AI assistant that lives inside your own WhatsApp account. Designed as a self-hosted "second brain" and digital Chief of Staff, ARGUS reads your incoming chats, prioritizes emails, manages reminders, schedules events, tracks shared expenses, and transcribes voice notes.
 
-**ARGUS** is a privacy-first, locally hosted AI executive assistant directly integrated into **WhatsApp**. Designed to function as your personal **Second Brain** and digital Chief of Staff, ARGUS actively ingests chatter across all your WhatsApp groups, prioritizes your inbox, schedules calendar events, and drafts polished messages—all controllable via natural conversational WhatsApp messages and voice notes.
+### What ARGUS Does
+- **🧠 Second Brain:** Automatically stores, categorizes, and recalls personal notes, facts, and preferences.
+- **💬 Group Catch-up:** Generates structured 3-tier summaries (Key Points, Links, Action Items) for active chats.
+- **📬 Email Triage (IMAP):** Checks unread inbox messages and performs executive deep-dive breakdowns.
+- **📅 Calendar Scheduling:** Generates 1-tap Google Calendar links from natural language or document dates.
+- **🎙️ Voice Note Transcription:** Transcribes WhatsApp voice memos using Groq Whisper.
+- **💸 Expense Ledger:** Tracks shared expenses, debts, and balances via conversational commands.
+- **📤 Message Drafter & Auto-Pilot:** Drafts polish messages for contacts and provides supervised or autonomous persona auto-replies.
+
+---
+
+## ⚠️ Honest Risks & Limitations
+
+Before running ARGUS, understand the actual architecture and trade-offs:
+
+1. **Unofficial WhatsApp Client:** ARGUS uses [`@whiskeysockets/baileys`](https://github.com/WhiskeySockets/Baileys), an unofficial WhatsApp Web reverse-engineered client. Using unofficial clients carries a potential risk of account suspension or ban by WhatsApp. ARGUS incorporates human-like typing delays, but use is entirely at your own risk.
+2. **Cloud AI Inference:** ARGUS is self-hosted, but **it is not zero-cloud**. Conversation snippets, email excerpts, and audio notes are sent over TLS to cloud inference APIs (Groq Cloud by default, or OpenAI/OpenRouter if configured).
+3. **Prompt Injection Risk:** When ARGUS processes messages from other contacts or group chats, external text reaches the model prompt. Never allow untrusted contacts to trigger sensitive tools without human oversight.
+4. **Credential Security:** Plaintext passwords, API keys, and sensitive financial secrets should never be saved in memory commands (`remember ...`). Memory vaults are indexed and retrieved directly by the LLM.
+5. **Multi-Writer Concurrency:** Both the Node.js bridge and Python brain interact with local SQLite databases. SQLite Write-Ahead Logging (WAL) is enabled to handle concurrent reads.
+
+---
+
+## 🏛️ Architecture
+
+For the complete technical specification, data schemas, and design decisions, see [**`docs/architecture.md`**](docs/architecture.md).
 
 ```
                      ┌─────────────────────────────────────────┐
@@ -40,232 +58,207 @@
                                           ▼
                      ┌─────────────────────────────────────────┐
                      │          ARGUS WhatsApp Bridge          │
+                     │       (apps/bridge: Node.js 20+)        │
                      │    TypeScript / SQLite / Cron Worker    │
                      └────────────────────┬────────────────────┘
-                                          │  HTTP + HMAC Auth
+                                          │  HTTP + HMAC Auth (argus-network)
                                           ▼
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │                                    ARGUS AI BRAIN                                      │
-│                               (FastAPI + Python Core)                                  │
+│                              (apps/brain: Python 3.11)                                 │
 ├────────────────────┬────────────────────┬─────────────────────┬────────────────────────┤
 │ 🧠 Second Brain    │ 📬 Gmail IMAP      │ 📅 Google Calendar  │ 🎙️ Groq Whisper        │
 │ Auto-Categorizer   │ Direct Reader      │ 1-Tap Link Engine   │ Voice Transcriber      │
 ├────────────────────┼────────────────────┼─────────────────────┼────────────────────────┤
-│ ⚡ Intent Router   │ 💬 3-Tier Catch-up │ 📤 Outbox Drafter   │ 🌐 DuckDuckGo          │
-│ & Pre-Filters      │ Conversation AI    │ Interactive Preview │ Real-time Search       │
+│ ⚡ Intent Router   │ 💬 3-Tier Catch-up │ 📤 Outbox Drafter   │ 🌐 Live Search         │
+│ & Fast Pre-Filters │ Conversation AI    │ Interactive Preview │ Grounding Engine       │
 └────────────────────┴────────────────────┴─────────────────────┴────────────────────────┘
 ```
 
 ---
 
-## ✨ Key Features
+## 🚀 Quickstart (Docker First)
 
-### 🧠 1. Cognitive "Second Brain" Memory
-* **Auto-Categorization & Tagging:** Say *"remember my student ID is ABC123XYZ and I am in Section 4"* — ARGUS auto-classifies it under `#academics` with tags `#id #section`.
-* **Conversational Synthesis:** Ask *"what is my student ID and section?"* and ARGUS returns a direct, highlighted answer.
-* **Knowledge Dashboard:** Type `memories` or `brain` to view your categorized knowledge graph (🎓 Academics, 👥 People, 🔐 Credentials, 👤 Personal, 💻 Projects).
-
-### 📤 2. Outbound Message Dispatch & AI Drafter
-* **Dispatch to Any Group or Contact:** *"Tell Jordan I will be 15 minutes late"* or *"Can you send message to Alex about moving meeting to 7"*.
-* **Context-Aware AI Drafting:** ARGUS writes a polite draft adapted to the recipient and sends a WhatsApp preview card.
-* **Full Interactive Control:** Reply `yes` (send now), `edit [new text]` (modify draft), or `cancel` (discard).
-
-### 💬 3. All-Chats Ingestion & 3-Tier Catch-up
-* **Smart Summaries:** Type `catchup Project Team` or `summarize group`.
-* **Structured 3-Tier Output:**
-  1. 📌 **Key Discussions & Announcements**
-  2. 🔗 **Links, Resources & Questions**
-  3. ⚡ **Action Items & Deadlines**
-
-### 📬 4. Universal Gmail / IMAP Inbox Reader
-* **Inbox Triage:** Type `read my emails` or `emails` to fetch unread emails with sender and subject previews.
-* **Executive Breakdown:** Type `summarize email #1` for a deep AI breakdown of any specific email.
-* **Inbox Search:** Type `search email invoice` to query your inbox in real time.
-
-### 📅 5. 1-Tap Google Calendar Sync
-* **Natural Scheduling:** *"Schedule Hackathon Pitch Presentation tomorrow at 4pm"*.
-* **1-Tap Google Calendar Links:** Generates instant Google Calendar add links that sync to your phone and smartwatch with one tap.
-* **Schedule Browser:** Type `events` or `calendar` to inspect all upcoming events.
-
-### 🎙️ 6. Groq Whisper Voice Notes
-* Speak directly into WhatsApp mic in your `ARGUS` group.
-* Voice notes are automatically transcribed via Groq Whisper (`whisper-large-v3`) and executed instantly.
-
-### 🤖 7. Auto-Pilot Digital Clone Persona
-* **Autonomous 1-on-1 Auto-Responder:** Turn on auto-pilot for specific contacts or global busy periods (`autopilot on for Alex` or `autopilot on: studying for exams`).
-* **Persona & Tone Matching:** Reads past conversation history and your Second Brain knowledge base to reply in your personal, authentic texting style.
-* **Transparent Activity Mirror:** Every auto-pilot response is mirrored back to your `ARGUS` command group in real-time.
-* **Realistic Typing Simulation:** Emulates real-world typing indicators (`composing`) with dynamic natural delays.
-
-### 🚫 8. Granular Chat Exemption
-* Stop ARGUS from logging spammy chats: `exempt [Group Name]` / `unexempt [Group Name]` / `exempted chats`.
-
----
-
-## 🚀 Quickstart Guide
+Running with Docker is the recommended production deployment. Containers run unprivileged as non-root users with isolated network boundaries.
 
 ### Prerequisites
-* **Node.js** v18+ and **npm**
-* **Python** v3.10+
-* Free **Groq API Key** ([console.groq.com](https://console.groq.com))
-* *(Optional)* **Gmail App Password** ([myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords))
+- Docker Engine 24+ and Docker Compose v2+
+- A free **Groq API Key** ([console.groq.com](https://console.groq.com))
+- *(Optional)* A Gmail App Password for email triage
 
 ---
 
-### Step 1: Clone Repository & Setup Environments
+### Step 1: Clone Repository & Configure Environment
 
 ```bash
-git clone https://github.com/your-username/ARGUS.git
+git clone https://github.com/EchoOfCode/ARGUS.git
 cd ARGUS
 ```
 
-#### Generating a Shared Secret:
-Generate a secure 32-byte hexadecimal secret for `ARGUS_SECRET` (used by both backend and bridge):
+Generate a secure 32-byte shared secret:
 ```bash
-# On Linux / macOS / Git Bash:
+# On Linux / macOS:
 openssl rand -hex 32
 
-# On Windows (PowerShell or Command Prompt with Python):
+# On Windows PowerShell:
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-#### Configure Backend Environment:
-Copy `backend/.env.example` to `backend/.env`:
+Initialize environment files:
 ```bash
-cp backend/.env.example backend/.env
-```
-Edit `backend/.env`:
-```ini
-GROQ_API_KEY=gsk_your_actual_groq_api_key
-GROQ_MODEL=llama-3.3-70b-versatile
-ARGUS_SECRET=change-me-generate-with-openssl-rand-hex-32
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_16_character_app_password
+cp apps/brain/.env.example apps/brain/.env
+cp apps/bridge/.env.example apps/bridge/.env
 ```
 
-#### Configure Bridge Environment:
-Copy `bridge/.env.example` to `bridge/.env`:
-```bash
-cp bridge/.env.example bridge/.env
-```
-Edit `bridge/.env`:
-```ini
-MY_JID=91XXXXXXXXXX@s.whatsapp.net
-AI_BRAIN_URL=http://127.0.0.1:8000
-ARGUS_SECRET=change-me-generate-with-openssl-rand-hex-32
-DEDICATED_GROUP_NAME=ARGUS
-```
+Edit both `.env` files:
+- Set `ARGUS_SECRET` to the generated 32-byte hexadecimal string in both `.env` files.
+- In `apps/brain/.env`, add your `GROQ_API_KEY`.
+- In `apps/bridge/.env`, set `MY_JID` to your WhatsApp phone number formatted as `919876543210@s.whatsapp.net`.
 
 ---
 
-### Step 2: Install Dependencies & Build
+### Step 2: Start Containers
 
 ```bash
-# Install Python backend dependencies
-cd backend
-pip install -r requirements.txt
-
-# Install Node.js bridge dependencies & compile TypeScript
-cd ../bridge
-npm install
-npm run build
-cd ..
+# Build and start background containers
+docker compose up --build -d
 ```
+
+> **Security Note:** In production, the brain container does **not** publish port `8000` to the host network. All bridge-to-brain traffic occurs over the private internal Docker network.
 
 ---
 
-### Step 3: Launch ARGUS
+### Step 3: Link WhatsApp via QR Code
 
-#### On Windows:
-Double click **`start.bat`** (or run `.\start.bat` in terminal).
-
-#### On macOS / Linux:
+Display the container logs to view the WhatsApp Web QR code:
 ```bash
-# Terminal 1: Start Backend (Bound to localhost)
-cd backend && uvicorn main:app --host 127.0.0.1 --port 8000
-
-# Terminal 2: Start Bridge
-cd bridge && npm start
+docker compose logs -f argus-bridge
 ```
+1. Open WhatsApp on your phone.
+2. Go to **Settings → Linked Devices → Link a Device**.
+3. Scan the terminal QR code.
+4. Create a WhatsApp group named **`ARGUS`** (or text your own number in self-chat).
+5. Send `help` to begin!
 
 ---
 
-### Step 4: Link WhatsApp & Create Command Group
+### Local Development Alternative (Without Docker)
 
-1. Scan the **QR Code** displayed in your terminal with WhatsApp (**Settings → Linked Devices → Link a Device**).
-2. In WhatsApp, create a new group named **`ARGUS`** (or text your own number in self-chat).
-3. Send **`help`** in the group to get started!
+If you prefer running directly on your host machine:
 
-> [!TIP]
-> **Encountering any connection issues, session glitches, or need a fresh QR code?**
-> Run **`fresh_start.bat`** on Windows (or remove `bridge/auth_info/` & `*.db`) to automatically clean session locks, reset local stores, and generate a brand-new QR code instantly!
+#### 1. Setup Dependencies
+```bash
+make setup
+# OR on Windows:
+.\scripts\setup.bat
+```
+
+#### 2. Start Services
+```bash
+make dev
+# OR on Windows:
+.\scripts\start.bat
+```
+- Brain runs at `http://127.0.0.1:8000` (Web Cockpit available at `/dashboard`).
+- Bridge logs into WhatsApp and displays the terminal QR code.
 
 ---
 
-## 🐳 Docker Deployment
+## ⚙️ Configuration Reference
 
-Run ARGUS completely containerized with a single command:
+### Brain (`apps/brain/.env`)
+| Variable | Required | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `ARGUS_SECRET` | **Yes** | — | HMAC shared secret (min 32 chars, cannot be placeholder). |
+| `GROQ_API_KEY` | **Yes** | — | API key from Groq Cloud Console. |
+| `GROQ_MODEL` | No | `llama-3.3-70b-versatile` | Primary reasoning model. |
+| `EMAIL_USER` | No | — | Gmail address for IMAP inbox triage. |
+| `EMAIL_PASS` | No | — | Gmail 16-character App Password. |
+| `HOST` | No | `127.0.0.1` | Local bind address (bound to localhost for security). |
+| `PORT` | No | `8000` | Port for the FastAPI ASGI server. |
 
-```bash
-# Build and run both backend and bridge with volume persistence
-docker-compose up --build -d
-
-# View the QR code in terminal to link WhatsApp
-docker attach argus-bridge
-```
-
-* Persistent volumes automatically preserve your WhatsApp credentials (`auth_info/`) and SQLite databases (`argus.db`, `argus_memory.db`).
+### Bridge (`apps/bridge/.env`)
+| Variable | Required | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `MY_JID` | **Yes** | — | Owner WhatsApp JID (e.g. `919876543210@s.whatsapp.net`). |
+| `ARGUS_SECRET` | **Yes** | — | Must match `ARGUS_SECRET` in brain configuration. |
+| `AI_BRAIN_URL` | No | `http://127.0.0.1:8000` | URL for brain service (`http://argus-brain:8000` in Docker). |
+| `LISTEN_MODE` | No | `all` | `all` to ingest all chats, or `allowlist` for restricted chats. |
+| `ALLOWED_JIDS` | No | — | Comma-separated list of allowed JIDs when in allowlist mode. |
+| `SEND_DELAY_MS` | No | `1500` | Natural typing delay between outgoing messages. |
+| `DEDICATED_GROUP_NAME` | No | `ARGUS` | WhatsApp group name for dedicated command channel. |
 
 ---
 
 ## 📖 Command Cheatsheet
 
-| Category | Command / Natural Language Example | Description |
+*(All examples use synthetic demonstration data)*
+
+| Category | Example Command | What ARGUS Does |
 | :--- | :--- | :--- |
-| **🧠 Second Brain** | `remember my student ID is ABC123XYZ` | Saves & auto-tags personal facts |
-| | `what is my student ID?` / `who is Alex?` | Synthesizes instant direct answers |
-| | `memories` / `my brain` | Displays full categorized knowledge base |
-| | `forget #1` / `forget project deadline` | Removes outdated facts |
-| **📤 Outbound Dispatch** | `tell Jordan I'll be 10 minutes late` | AI drafts message & prompts confirmation |
-| | `can u send message to Alex about moving meeting to 7` | Polishes draft, previews card & dispatches |
-| | `save contact Alex 919876543210` | Adds contact to directory |
-| | `contacts` | Lists all synced groups and contacts |
-| **💬 Group Catch-up** | `summarize group` / `catchup` | Summarizes most active recent chat |
-| | `catchup Project Team` | 3-tier structured summary of specific chat |
-| **📬 Emails (IMAP)** | `read my emails` / `emails` | Fetches recent unread emails |
-| | `summarize email #1` | Deep executive breakdown of specific email |
-| | `search email invoice` | Queries inbox via IMAP |
-| **🤖 Auto-Pilot Persona** | `autopilot on for Alex` | Auto-replies as you in your voice to that contact |
-| | `autopilot on: studying for exams` | Global busy auto-responder for all DMs |
-| | `autopilot off` / `autopilot off Alex` | Disables auto-pilot |
-| | `autopilot status` / `autopilot` | Views active auto-pilot rules & stats |
-| **📅 Calendar & Events** | `schedule Project Review tomorrow at 4pm` | Generates 1-tap Google Calendar add link |
-| | `events` / `calendar` | Views upcoming schedule |
-| | `cancel event #1` | Removes event from calendar |
-| **📝 Tasks & Reminders** | `todos` / `add buy groceries` / `done #1` | Manages personal todo checklist |
-| | `remind me to call Mom in 20 minutes` | Automated WhatsApp reminder notification |
-| **🌅 Daily Briefing** | `briefing` / `agenda` | Instant morning/daily executive overview |
-| **🚫 Chat Exemption** | `exempt [Group Name]` / `unexempt [Group Name]` | Ignores or un-ignores noisy chats |
+| **🧠 Second Brain** | `remember office parking spot is B-12` | Categorizes and stores note into memory vault. |
+| | `where is my parking spot?` | Synthesizes instant answer from memory. |
+| | `memories` | Displays full categorized knowledge graph. |
+| | `forget parking` | Deletes outdated memory entries. |
+| **💬 Chat Catch-up** | `catchup Project Alpha` | Generates 3-tier summary of recent group discussion. |
+| | `summarize chat` | Summarizes most recent active conversation. |
+| **📬 Email Reader** | `read my emails` | Fetches unread email headers and senders. |
+| | `summarize email #1` | Deep executive breakdown of specific message. |
+| **📅 Calendar** | `schedule Project Sync tomorrow at 4pm` | Produces 1-tap Google Calendar event creation link. |
+| | `events` / `calendar` | Shows upcoming schedule from local database. |
+| **📝 Reminders** | `remind me to send budget report in 45 minutes` | Sends scheduled alert back into WhatsApp. |
+| | `todos` / `add buy printer ink` | Manages personal todo checklist. |
+| **💸 Split Ledger** | `paid 450 for lunch with Alex` | Logs shared expense entry. |
+| | `who owes me` / `expenses` | Shows net debt and balance breakdown. |
+| **🤖 Persona Auto-Pilot**| `autopilot on for Alex` | Automatically replies to contact in owner's writing style. |
+| | `autopilot off` | Disables auto-pilot responses. |
+| **🚫 Exemptions** | `exempt Family Group` | Stops message logging for spammy group chats. |
 
 ---
 
-## 🔒 Security & Privacy
+## 🛠️ Troubleshooting
 
-* **Local Data Storage:** All message logs, contact directories, and Second Brain memories are stored locally on your machine in SQLite databases (`argus.db` and `argus_memory.db`).
-* **Cloud AI Inference:** By default, LLM inference and voice transcription run via Groq Cloud APIs. When features are used, relevant message text, voice audio, or email snippets are sent to the provider over TLS. (Local providers such as Ollama or custom endpoints can be configured in `.env` if cloud inference is not desired).
-* **Internal Shared Secret:** API communication between the Bridge and AI Brain is secured with an HMAC `X-Argus-Secret` authentication header.
-* **Strict `.gitignore` & `.dockerignore`:** Session keys (`auth_info/`), credentials (`.env`), and database files (`*.db`) are excluded from version control and container builds.
+### 1. "ARGUS_SECRET must be at least 32 characters" or "cannot be placeholder"
+- **Cause:** Startup validation detected an empty, default placeholder, or short secret.
+- **Fix:** Generate a 32-byte secret (`openssl rand -hex 32`) and paste the exact value into both `apps/brain/.env` and `apps/bridge/.env`.
+
+### 2. WhatsApp QR Code Disappears or Times Out
+- **Fix:** Restart the bridge service or attach to the container:
+  ```bash
+  docker compose restart argus-bridge
+  docker compose logs -f argus-bridge
+  ```
+- To completely reset WhatsApp authentication credentials:
+  ```bash
+  # Local:
+  rm -rf apps/bridge/auth_info
+  # Docker:
+  docker volume rm argus_whatsapp_auth
+  ```
+
+### 3. Backing Up Persistent Data
+Persistent data is isolated in Docker volumes:
+- `argus_whatsapp_auth`: WhatsApp Web encryption keys and pairing state.
+- `argus_brain_memory`: Second Brain memory database (`argus_memory.db`).
+- `argus_bridge_data`: Message log and contact cache (`argus.db`).
+
+To back up databases:
+```bash
+docker run --rm -v argus_bridge_data:/data -v $(pwd):/backup alpine cp /data/argus.db /backup/
+docker run --rm -v argus_brain_memory:/data -v $(pwd):/backup alpine cp /data/argus_memory.db /backup/
+```
 
 ---
 
-## ⚠️ Risks & Considerations
+## 🔒 Security & Community
 
-* **Unofficial WhatsApp Client:** ARGUS uses `@whiskeysockets/baileys` to communicate with WhatsApp Web protocols. Using unofficial clients carries a risk of account suspension or ban by WhatsApp. ARGUS includes built-in rate-limiting delays to mitigate rapid messaging patterns, but use of this software is at your own risk.
-* **Auto-Pilot Persona Impersonation:** When Auto-Pilot is enabled, ARGUS automatically drafts and sends messages acting in your name. Keep auto-pilot restricted to specific contacts or enable supervised approval.
-* **Sensitive Credentials Caution:** Do NOT store sensitive passwords, API keys, private credentials, or payment details in the Second Brain memory vault. The memory vault is searchable by the LLM during conversational synthesis.
+- **Security Vulnerabilities:** Review our policy in [**`SECURITY.md`**](SECURITY.md).
+- **Contributing:** Guidelines, setup steps, and coding conventions are in [**`CONTRIBUTING.md`**](CONTRIBUTING.md).
+- **Code of Conduct:** Standards of engagement are in [**`CODE_OF_CONDUCT.md`**](CODE_OF_CONDUCT.md).
+- **Changelog:** Project evolution is tracked in [**`CHANGELOG.md`**](CHANGELOG.md).
 
 ---
 
 ## 📜 License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details. Created with ❤️ by **Mohammed Yusuf Ahmed (Yusuf)**.
+Licensed under the [MIT License](LICENSE). Copyright © 2026 Mohammed Yusuf Ahmed.

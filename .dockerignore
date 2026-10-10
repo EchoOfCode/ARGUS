@@ -8,6 +8,8 @@
 *.env
 backend/.env
 bridge/.env
+apps/brain/.env
+apps/bridge/.env
 
 .git
 .gitignore
@@ -34,6 +36,7 @@ env
 *.db-shm
 auth_info
 bridge/auth_info
+apps/bridge/auth_info
 
 # Android & Remotion
 android/

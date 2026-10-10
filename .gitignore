@@ -6,15 +6,16 @@
 .env
 .env.*
 !.env.example
-backend/.env
-backend/.env.*
-!backend/.env.example
-bridge/.env
-bridge/.env.*
-!bridge/.env.example
+apps/brain/.env
+apps/brain/.env.*
+!apps/brain/.env.example
+apps/bridge/.env
+apps/bridge/.env.*
+!apps/bridge/.env.example
 .vscode
 
 # ─── WhatsApp Session Keys & Pairwise Credentials ──────────────────
+apps/bridge/auth_info/
 bridge/auth_info/
 auth_info/
 *.session
@@ -29,8 +30,8 @@ auth_info/
 *.db-shm
 *.sqlite
 *.sqlite3
-backend/argus_memory.db
-bridge/argus.db
+apps/brain/argus_memory.db
+apps/bridge/argus.db
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -38,10 +39,9 @@ yarn-error.log*
 
 # ─── Node.js & TypeScript ──────────────────────────────────────────
 node_modules/
-bridge/node_modules/
-remotion/node_modules/
+apps/bridge/node_modules/
 dist/
-bridge/dist/
+apps/bridge/dist/
 build/
 .npm/
 

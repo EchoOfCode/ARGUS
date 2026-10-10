@@ -1,75 +1,214 @@
-# Architecture
+# ARGUS: Architecture, System Design & Tech Stack
 
-## System diagram
+> **Autonomous Real-time General Utility System (ARGUS)**  
+> *A self-hosted, local-first AI Chief of Staff and personal cognitive operating system integrated directly with WhatsApp, Second Brain memory, Calendar, Document Vision, and Financial Ledgers.*
+
+---
+
+## Table of Contents
+1. [System Overview](#system-overview)
+2. [Complete Tech Stack](#complete-tech-stack)
+3. [High-Level Architecture & Data Flow](#high-level-architecture--data-flow)
+4. [Core Subsystems & Implementation Details](#core-subsystems--implementation-details)
+5. [Database Schema & Multi-Process Concurrency](#database-schema--multi-process-concurrency)
+6. [Repository Manifest](#repository-manifest)
+7. [Installation & Setup](#installation--setup)
+
+---
+
+## System Overview
+
+ARGUS transforms personal WhatsApp into an executive AI control center. Rather than acting as a standard conversational chatbot, ARGUS runs as an **Autonomous Agentic Operating System** on the user's local machine with direct read/write access to local SQLite databases, message logs, contacts, calendar agendas, and web tools.
 
 ```
-Android Phone
- ├─ NotificationListenerService (always running)
- │    → captures (app_package, notification_text, posted_at) for every new notification
- │
- ├─ On-device pre-filter (pure Kotlin, no network call)
- │    → regex/keyword check: does text plausibly reference a date, time, or meeting?
- │    → ~90%+ of notifications are discarded here (likes, promos, unrelated chats)
- │
- ├─ (only for plausible candidates) HTTP POST over Tailscale ──────► Laptop backend
- │
- ├─ Local action queue (Room/SQLite) — stores pending candidates + extraction results
- │
- ├─ Confirmation notification (Yes / Edit / Ignore actions)
- │
- └─ CalendarContract.Events write (on user confirmation only)
-
-Laptop (always-on while in use; phone queues if laptop is offline)
- ├─ FastAPI server, reachable only via Tailscale (no public port)
- ├─ POST /extract-event endpoint (see API_SPEC.md)
- ├─ Groq API call with a strict extraction prompt
- └─ Returns structured JSON: is_event, title, date, time, confidence
-
-Groq API
- └─ LLM inference only. Receives a text snippet + extraction instructions, nothing else.
+                  ┌────────────────────────────────────────────────────────┐
+                  │                 USER'S WHATSAPP CLIENT                 │
+                  │   (Dedicated ARGUS Group  /  1-on-1 Direct Chats)      │
+                  └───────────────────────────┬────────────────────────────┘
+                                              │ WebSocket (E2EE)
+                                              ▼
+                  ┌────────────────────────────────────────────────────────┐
+                  │          WHATSAPP BRIDGE (Node.js + TypeScript)        │
+                  │   • Baileys Protocol Handler  • Multi-Device Auth       │
+                  │   • Local Fast-Path Dispatch  • Media Downloader       │
+                  └─────────────┬────────────────────────────┬─────────────┘
+                                │ SQLite Reads/Writes        │ HTTP / Multipart + HMAC
+                                ▼                            ▼
+     ┌──────────────────────────────────────┐     ┌────────────────────────┐
+     │       LOCAL SQLITE DATABASES         │     │     AI BRAIN BACKEND   │
+     │   • argus.db (WAL Mode)              │◄────┤     (Python FastAPI)   │
+     │     - message_log                    │     │   • ReAct Agent Loop   │
+     │     - chat_directory                 │     │   • Tool Execution     │
+     │     - autopilot_rules                │     │   • Stylometry Engine  │
+     │     - tracked_followups              │     │   • Vision Intelligence│
+     │     - expenses                       │     │   • Groq / OpenRouter  │
+     │   • argus_memory.db (Second Brain)   │     └───────────┬────────────┘
+     └──────────────────────────────────────┘                 │
+                                                              ▼
+                                                  ┌────────────────────────┐
+                                                  │   WEB COCKPIT STUDIO   │
+                                                  │ (http://127.0.0.1:8000)│
+                                                  └────────────────────────┘
 ```
 
-## Component responsibilities
+---
 
-### 1. NotificationListenerService (Android)
-- Registers as a system notification listener (`android.permission.BIND_NOTIFICATION_LISTENER_SERVICE`).
-- On `onNotificationPosted`, extract `packageName`, notification title/text, and timestamp.
-- Maintain an allowlist of app packages (WhatsApp, Messages/SMS, Telegram, etc.) — don't process everything by default. Reduces noise and battery use.
-- Must survive Doze mode: request battery optimization exemption from the user on first run (standard Android intent, not a hack) — this is a personal app the user installs deliberately.
+## Complete Tech Stack
 
-### 2. On-device pre-filter
-- Pure text heuristics, zero network calls, runs in milliseconds.
-- Looks for: day names, relative date words (tomorrow, next week), time patterns (3pm, 15:00, 3:30), and meeting-indicating words (meet, call, appointment, sync, catch up).
-- Purpose: protect the Groq free-tier rate limit and the user's battery — most notifications never leave the phone.
+### 1. WhatsApp Bridge Gateway (`apps/bridge`)
+| Technology | Role | Details |
+| :--- | :--- | :--- |
+| **Node.js 20+** | Runtime | Asynchronous runtime powering the bridge daemon |
+| **TypeScript 5.x** | Language | Type-safe Baileys event handling and message pipeline |
+| **`@whiskeysockets/baileys`** | WhatsApp Protocol | Reverse-engineered Multi-Device WhatsApp Web WebSocket protocol with QR code authentication and full E2EE handling |
+| **`better-sqlite3`** | Storage Engine | High-performance synchronous SQLite driver configured in WAL mode |
+| **`axios` & `form-data`** | HTTP Client | Streaming multipart file uploads and JSON payload dispatch to FastAPI |
+| **`zod`** | Validation | Runtime environment variable validation and fail-fast startup checks |
+| **`pino`** | Logging | Structured JSON logger for high-throughput observability |
 
-### 3. Local action queue
-- SQLite/Room table: candidate text, source app, extraction result (once returned), status (pending/confirmed/ignored), timestamps.
-- If the laptop backend is unreachable, candidates queue locally and retry (e.g., via WorkManager) rather than being dropped silently.
+### 2. AI Brain & Agent Backend (`apps/brain`)
+| Technology | Role | Details |
+| :--- | :--- | :--- |
+| **Python 3.10+** | Runtime | High-level execution runtime for AI agent loops and parsing |
+| **FastAPI** | ASGI Framework | Non-blocking async API layer serving inference, dashboard endpoints, and webhooks |
+| **Uvicorn** | Web Server | Production ASGI web server running on `127.0.0.1:8000` |
+| **Pydantic v2 & Settings** | Data Validation | Strict data contracts, JSON schema definitions, and fail-fast startup validation |
+| **Groq Python SDK** | LLM Engine | Fast inference with Llama 3.3 70B, DeepSeek R1, and Whisper Large v3 |
+| **Multi-Provider Client** | Fallback Support | Unified OpenAI-compatible interface supporting OpenRouter, OpenAI, and Ollama |
+| **`pypdf`** | PDF Intelligence | Binary stream text and structure extraction from academic and corporate PDFs |
+| **`ddgs`** | Live Web Grounding | Real-time live web searches with anti-blocking headers |
 
-### 4. Confirmation UI
-- A local Android notification with three actions: Yes (write as-is), Edit (open a small edit screen, then save), Ignore (discard, mark as ignored so it's not re-prompted).
-- This is the trust-building layer. Do not remove it in v1 regardless of how confident extraction seems.
+### 3. Web Cockpit Dashboard
+| Technology | Role | Details |
+| :--- | :--- | :--- |
+| **HTML5 & Semantic CSS3** | UI Shell | Glassmorphic dark-mode dashboard with responsive grid design |
+| **Vanilla JavaScript (ES6+)** | Frontend Logic | Zero-dependency, framework-free reactive UI (sub-millisecond load time) |
+| **Fetch API & REST** | Data Sync | Real-time telemetry, toggle controls, and interactive Agent Chat studio |
 
-### 5. Calendar write
-- Uses `CalendarContract.Events` content provider directly — requires `WRITE_CALENDAR` permission, no OAuth, no internet call needed for this step.
-- Writes to the device's default local calendar unless the user configures otherwise.
+---
 
-### 6. Laptop backend (FastAPI)
-- Single responsibility: receive text, call Groq with a structured-extraction prompt, return structured JSON. Stateless per request — the queue/history lives on the phone, not the backend. Keeps the backend simple and avoids two-way state sync.
-- Bound to the Tailscale interface, not `0.0.0.0` on the public interface — should not be reachable outside the private tailnet.
-- Requires a shared-secret header on every request (see SECURITY.md) — Tailscale network membership is not, by itself, request authentication.
+## Core Subsystems & Implementation Details
 
-### 7. Groq call
-- One call per candidate, using a fixed system prompt (exact contract in API_SPEC.md) instructing the model to return **only** JSON — no prose, no markdown fences.
-- Low `max_tokens` — this is a short structured extraction, not a conversation. Keeps responses fast and free-tier-efficient.
+### 1. Autonomous ReAct Tool-Calling Engine
+* **Location:** [`apps/brain/agent_core.py`](file:///e:/ARGUS/apps/brain/agent_core.py)
+* **Architecture:** Implements a multi-turn ReAct (Reasoning + Acting) loop where the LLM can dynamically inspect its environment, invoke local tools, observe real SQLite database output, and composite multiple actions in one step.
+* **Integrated Native Tools:**
+  1. `list_contacts`: Real SQLite search across WhatsApp contacts.
+  2. `search_chat_history`: Cross-chat keyword and semantic search.
+  3. `search_links_and_files`: Cross-conversation link aggregator (Zoom, Meet, Docs).
+  4. `get_agenda` & `schedule_event`: Queries confirmed calendar events and adds new items.
+  5. `create_reminder` & `create_todo`: Logs time-based reminders and task items.
+  6. `record_expense` & `get_financial_summary`: Logs expenses, debts, and balance sheets.
+  7. `draft_whatsapp_message`: Drafts dispatchable WhatsApp messages.
+  8. `manage_memory`: Second Brain query, store, and category recall.
+  9. `web_search`: Live real-time internet search via DuckDuckGo.
 
-## Why these specific decisions
+### 2. Dynamic Stylometry & Adaptive Persona
+* **Location:** [`apps/brain/stylometry.py`](file:///e:/ARGUS/apps/brain/stylometry.py) & [`apps/brain/groq_client.py`](file:///e:/ARGUS/apps/brain/groq_client.py)
+* **Mechanism:**
+  * Analyzes the owner's authentic past sent messages from SQLite (`message_log`).
+  * Calculates real average sentence length, casing habits, punctuation patterns, and vocabulary slang.
+  * Injects real few-shot examples of typing style directly into generation prompts.
+  * Ensures auto-pilot replies mirror natural conversational cadence rather than generic AI phrasing.
 
-| Decision | Alternative considered | Why this one |
-|---|---|---|
-| NotificationListenerService | AccessibilityService | Lighter weight, less invasive permission, sufficient for v1 |
-| CalendarContract (local) | Google Calendar API | No OAuth setup, no internet dependency for the write itself |
-| Confirm-first | Full auto-write | Extraction will make mistakes; auto-write with no accuracy data erodes trust fast |
-| Laptop as backend | On-phone LLM call | Keeps Groq key off the phone; backend can be reused for a broader assistant later |
-| Tailscale | ngrok / public port | Free, private, stable hostname, no exposed attack surface |
-| On-device pre-filter | Send everything to Groq | Protects free-tier rate limits and battery |
+### 3. WhatsApp Baileys Bridge Gateway
+* **Location:** [`apps/bridge/src/messageHandler.ts`](file:///e:/ARGUS/apps/bridge/src/messageHandler.ts) & [`apps/bridge/src/selfChat.ts`](file:///e:/ARGUS/apps/bridge/src/selfChat.ts)
+* **Key Capabilities:**
+  * **Dedicated Command Room:** Operates inside a private group named `ARGUS` where user commands, document drops, and status mirror cards are routed.
+  * **Fast-Path Local Routing:** Common operations (mute, unmute, help, status) resolve in < 1ms locally without waiting for LLM roundtrips.
+  * **Multi-Turn Context Buffer:** Retains recent message context to handle conversational follow-ups.
+  * **`@lid` & Fuzzy Contact Resolution:** Handles WhatsApp Linked Identity JIDs and maps contact names.
+
+### 4. Multimodal Document & Vision Intelligence
+* **Location:** [`apps/brain/vision_doc_analyzer.py`](file:///e:/ARGUS/apps/brain/vision_doc_analyzer.py)
+* Extracts syllabus deadlines, exam dates, invoice costs, and meeting notes from PDF documents and image attachments.
+
+---
+
+## Database Schema & Multi-Process Concurrency
+
+ARGUS uses SQLite with **Write-Ahead Logging (WAL)** mode enabled. This allows the Node.js TypeScript bridge and the Python FastAPI backend to read and write concurrently without locking collisions.
+
+```sql
+-- Contacts & Groups Directory
+CREATE TABLE chat_directory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  jid TEXT UNIQUE,
+  name TEXT,
+  is_group INTEGER DEFAULT 0,
+  last_seen TEXT
+);
+
+-- Full Message Log & Stylometry Training Data
+CREATE TABLE message_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_jid TEXT,
+  sender_jid TEXT,
+  sender_name TEXT,
+  chat_name TEXT,
+  message_text TEXT,
+  is_from_me INTEGER DEFAULT 0,
+  timestamp TEXT
+);
+
+-- Auto-Pilot Persona Rules
+CREATE TABLE autopilot_rules (
+  jid TEXT PRIMARY KEY,
+  name TEXT,
+  status TEXT DEFAULT 'active',
+  custom_prompt TEXT,
+  auto_reply_count INTEGER DEFAULT 0,
+  created_at TEXT,
+  last_replied_at TEXT
+);
+
+-- Tracked Message Follow-Ups
+CREATE TABLE tracked_followups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_jid TEXT,
+  recipient_name TEXT,
+  last_message_text TEXT,
+  sent_at TEXT,
+  status TEXT DEFAULT 'pending'
+);
+
+-- Conversational Expense & Split Ledger
+CREATE TABLE expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  amount REAL NOT NULL,
+  category TEXT DEFAULT 'general',
+  description TEXT,
+  person TEXT,
+  is_debt INTEGER DEFAULT 0, -- 0 = expense, 1 = money owed to user, 2 = user owes
+  logged_at TEXT
+);
+```
+
+---
+
+## Repository Manifest
+
+```
+ARGUS/
+├── apps/
+│   ├── brain/                  # FastAPI Python Cognitive Engine & Memory
+│   │   ├── agent_core.py       # Autonomous ReAct Agent Loop
+│   │   ├── config.py           # Pydantic Settings Validation
+│   │   ├── stylometry.py       # Linguistic Persona Learning Engine
+│   │   ├── dashboard.py        # Web Cockpit Studio & REST API
+│   │   ├── main.py             # FastAPI App & HMAC Auth Middleware
+│   │   └── requirements.txt    # Python Dependencies
+│   └── bridge/                 # Node.js TypeScript WhatsApp Bridge
+│       ├── src/
+│       │   ├── index.ts        # Baileys Socket Lifecycle & Auth Manager
+│       │   ├── messageHandler.ts # Message Ingestion & Media Pipeline
+│       │   ├── selfChat.ts     # Command Processor & Fast-Path Router
+│       │   ├── config.ts       # Zod Runtime Configuration Validator
+│       │   └── db.ts           # SQLite Database Access Layer
+│       └── package.json        # Node.js Dependencies
+├── deploy/                     # Production & Development Docker Compose configurations
+├── docs/                       # Architecture & Security Incident documentation
+├── scripts/                    # Convenience setup and launch scripts
+├── Makefile                    # Standard developer automation commands
+└── justfile                    # Just runner configuration
+```

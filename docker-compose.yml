@@ -1,31 +1,38 @@
 version: "3.8"
 
 services:
-  # ─── ARGUS AI Brain (FastAPI + Groq + Memory + IMAP) ──────────
+  # ─── ARGUS AI Brain (FastAPI + Agent Core + Memory) ───────────
   argus-brain:
     build:
-      context: ./backend
+      context: ./apps/brain
       dockerfile: Dockerfile
     container_name: argus-brain
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8000:8000"
+    # Internal communication only — brain port is NEVER published to host in production
+    expose:
+      - "8000"
     env_file:
-      - ./backend/.env
+      - ./apps/brain/.env
     volumes:
-      - ./backend/argus_memory.db:/app/argus_memory.db
+      - argus_brain_memory:/app/data
     networks:
       - argus-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1024M
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 15s
       timeout: 5s
       retries: 3
+      start_period: 10s
 
-  # ─── ARGUS WhatsApp Bridge (Node.js + Baileys + SQLite) ────────
+  # ─── ARGUS WhatsApp Bridge (Node.js + Baileys + SQLite) ─────────
   argus-bridge:
     build:
-      context: ./bridge
+      context: ./apps/bridge
       dockerfile: Dockerfile
     container_name: argus-bridge
     restart: unless-stopped
@@ -33,17 +40,36 @@ services:
       argus-brain:
         condition: service_healthy
     env_file:
-      - ./bridge/.env
+      - ./apps/bridge/.env
     environment:
       - AI_BRAIN_URL=http://argus-brain:8000
     volumes:
-      - ./bridge/auth_info:/app/auth_info
-      - ./bridge/argus.db:/app/argus.db
+      - argus_whatsapp_auth:/app/auth_info
+      - argus_bridge_data:/app/data
     networks:
       - argus-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1024M
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep '[n]ode' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     stdin_open: true
     tty: true
 
 networks:
   argus-network:
     driver: bridge
+
+volumes:
+  argus_whatsapp_auth:
+    name: argus_whatsapp_auth
+  argus_brain_memory:
+    name: argus_brain_memory
+  argus_bridge_data:
+    name: argus_bridge_data
