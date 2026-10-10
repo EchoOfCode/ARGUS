@@ -1,0 +1,35 @@
+[project]
+name = "argus-brain"
+version = "2.1.0"
+description = "ARGUS AI Brain — FastAPI Cognitive Assistant Engine"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+]
+ignore = [
+    "E501",  # line length handled by formatter
+    "E402",  # module level import not at top of file (common in scripts with load_dotenv)
+    "W291",  # trailing whitespace in embedded multiline SQL/HTML
+    "W293",  # blank line whitespace in embedded templates
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "models", "groq_client", "memory", "agent_core"]

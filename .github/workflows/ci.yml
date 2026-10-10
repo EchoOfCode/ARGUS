@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'phase-*'
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repo-hygiene:
+    name: Repo Hygiene & Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for tracked secret/db files
+        run: |
+          echo "Verifying no .env or *.db files are tracked in repository..."
+          TRACKED=$(git ls-files | grep -E '(\.env($|\..*)|\.db$|auth_info/)' || true)
+          # Exclude .env.example files which are intentionally tracked templates
+          VIOLATIONS=$(echo "$TRACKED" | grep -v '\.env\.example' || true)
+          if [ -n "$VIOLATIONS" ]; then
+            echo "ERROR: Sensitive files are tracked in git:"
+            echo "$VIOLATIONS"
+            exit 1
+          fi
+          echo "Clean: No forbidden files tracked."
+
+      - name: Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  brain-checks:
+    name: Brain (Python) Lint & Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/brain
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: apps/brain/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint with Ruff
+        run: ruff check .
+
+      - name: Run characterization tests
+        run: pytest tests/ -v
+
+  bridge-checks:
+    name: Bridge (Node) Typecheck & Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/bridge
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: apps/bridge/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm test
+
+  web-checks:
+    name: Web UI (Next.js) Build & Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run unit & security tests
+        run: npm test
+
+      - name: Build Next.js application
+        run: npm run build
+        env:
+          ARGUS_WEB_ACCESS_KEY: "test_ci_web_access_key_32_bytes_long!"
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright smoke tests
+        run: npm run test:e2e
+        env:
+          ARGUS_WEB_ACCESS_KEY: "test_playwright_access_key_32_bytes_long!"
+          CI: true
+
+  docker-build:
+    name: Docker Image Build Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Brain Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/brain/Dockerfile
+          push: false
+          tags: argus-brain:test
+
+      - name: Build Bridge Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/bridge/Dockerfile
+          push: false
+          tags: argus-bridge:test
+
+      - name: Build Web Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/web
+          file: ./apps/web/Dockerfile
+          push: false
+          tags: argus-web:test
