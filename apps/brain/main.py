@@ -108,7 +108,6 @@ from contextlib import asynccontextmanager
 from api_bridge import bridge_router
 from api_ui import ui_router
 from auth import verify_request_auth
-from dashboard import dashboard_router
 from db import init_schema
 
 
@@ -125,7 +124,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.include_router(dashboard_router)
 app.include_router(bridge_router)
 app.include_router(ui_router)
 
