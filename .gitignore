@@ -78,8 +78,7 @@ remotion/
 !assets/
 !assets/*
 
-# ─── Documentation & Internal Notes ─────────────────────────────
-docs/
+# ─── Internal Notes ─────────────────────────────────────────────
 SETUP_GUIDE.md
 
 # ─── OS & IDE Configuration ────────────────────────────────────────
