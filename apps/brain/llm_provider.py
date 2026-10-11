@@ -10,7 +10,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
+import httpx
 
 logger = logging.getLogger("argus.llm")
 
@@ -189,7 +189,7 @@ class OllamaProvider(BaseLLMProvider):
         if response_format and response_format.get("type") == "json_object":
             payload["format"] = "json"
 
-        resp = requests.post(url, json=payload, timeout=60)
+        resp = httpx.post(url, json=payload, timeout=60)
         resp.raise_for_status()
         data = resp.json()
         content = data.get("message", {}).get("content", "")
