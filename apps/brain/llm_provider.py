@@ -226,7 +226,7 @@ class GeminiProvider(BaseLLMProvider):
             api_key=self.api_key or "dummy",
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         )
-        self.default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.default_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
     def chat_completion(
         self,
@@ -275,14 +275,14 @@ def classify_route_target(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
                 user_text = content
             elif isinstance(content, list):
                 # Multimodal or complex content structure -> Gemini
-                return "gemini", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+                return "gemini", os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
             break
 
     lower = user_text.lower()
 
     # 1. Explicit user override
     if "@gemini" in lower or "use gemini" in lower or "/gemini" in lower:
-        return "gemini", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        return "gemini", os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     if "@groq" in lower or "use groq" in lower or "/groq" in lower:
         return "groq", os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
@@ -294,7 +294,7 @@ def classify_route_target(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
         "dockerfile", "yaml", "json schema", "bug in my code", "write a script"
     )
     if any(ind in lower for ind in code_indicators):
-        return "gemini", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        return "gemini", os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
     # 3. Deep reasoning, research, complex analysis, long queries (>100 words) -> Gemini
     reasoning_indicators = (
@@ -303,7 +303,7 @@ def classify_route_target(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
         "mathematical", "calculate", "solve the equation", "comprehensive guide"
     )
     if any(ind in lower for ind in reasoning_indicators) or len(user_text.split()) > 100:
-        return "gemini", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        return "gemini", os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
     # 4. Fast responses, casual chat, quick Q&A, greetings, formatting -> Groq
     return "groq", os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -320,6 +320,8 @@ class RouterLLMProvider(BaseLLMProvider):
     def __init__(self):
         self.groq_available = bool(os.getenv("GROQ_API_KEY"))
         self.gemini_available = bool(os.getenv("GEMINI_API_KEY"))
+        self.groq_model = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         self._groq_provider: Optional[GroqProvider] = GroqProvider() if self.groq_available else None
         self._gemini_provider: Optional[GeminiProvider] = GeminiProvider() if self.gemini_available else None
 
@@ -332,17 +334,16 @@ class RouterLLMProvider(BaseLLMProvider):
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Dict[str, str]] = None,
     ) -> Any:
-        target, target_model = classify_route_target(messages)
-        active_model = model or target_model
+        target, _ = classify_route_target(messages)
 
         if target == "gemini" and self._gemini_provider:
-            primary = ("gemini", self._gemini_provider, active_model)
-            secondary = ("groq", self._groq_provider, os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")) if self._groq_provider else None
+            primary = ("gemini", self._gemini_provider, self.gemini_model)
+            secondary = ("groq", self._groq_provider, self.groq_model) if self._groq_provider else None
         elif self._groq_provider:
-            primary = ("groq", self._groq_provider, active_model)
-            secondary = ("gemini", self._gemini_provider, os.getenv("GEMINI_MODEL", "gemini-2.5-flash")) if self._gemini_provider else None
+            primary = ("groq", self._groq_provider, self.groq_model)
+            secondary = ("gemini", self._gemini_provider, self.gemini_model) if self._gemini_provider else None
         elif self._gemini_provider:
-            primary = ("gemini", self._gemini_provider, active_model)
+            primary = ("gemini", self._gemini_provider, self.gemini_model)
             secondary = None
         else:
             raise RuntimeError("RouterLLMProvider requires at least GROQ_API_KEY or GEMINI_API_KEY")

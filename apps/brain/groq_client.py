@@ -39,7 +39,7 @@ def _get_provider_config() -> Tuple[str, str, Optional[str], Dict[str, str], str
     if provider == "gemini":
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY") or ""
         base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-        model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+        model = os.getenv("GEMINI_MODEL") or "gemini-3.8-flash"
         return "gemini", api_key, base_url, {}, model
 
     # 3. OpenAI Direct
@@ -88,13 +88,13 @@ class _RouterChatCompletions:
         active_model = kwargs.get("model") or target_model
 
         if target_name == "gemini" and self.gemini_client:
-            primary_client, primary_model, p_name = self.gemini_client, active_model, "gemini"
+            primary_client, primary_model, p_name = self.gemini_client, self.gemini_model, "gemini"
             secondary_client, secondary_model, s_name = self.groq_client, self.groq_model, "groq"
         elif self.groq_client:
-            primary_client, primary_model, p_name = self.groq_client, active_model, "groq"
+            primary_client, primary_model, p_name = self.groq_client, self.groq_model, "groq"
             secondary_client, secondary_model, s_name = self.gemini_client, self.gemini_model, "gemini"
         elif self.gemini_client:
-            primary_client, primary_model, p_name = self.gemini_client, active_model, "gemini"
+            primary_client, primary_model, p_name = self.gemini_client, self.gemini_model, "gemini"
             secondary_client, secondary_model, s_name = None, None, None
         else:
             raise RuntimeError("No LLM client configured for router. Set GROQ_API_KEY or GEMINI_API_KEY.")
@@ -118,17 +118,21 @@ class _RouterClientWrapper:
     def __init__(self):
         groq_key = os.getenv("GROQ_API_KEY")
         gemini_key = os.getenv("GEMINI_API_KEY")
-        groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-        gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        groq_model = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+        gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+
+        headers = {"Accept-Encoding": "gzip, deflate"}
 
         groq_client = OpenAI(
             api_key=groq_key or "dummy",
             base_url=os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1"),
+            default_headers=headers,
         ) if groq_key else None
 
         gemini_client = OpenAI(
             api_key=gemini_key or "dummy",
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_headers=headers,
         ) if gemini_key else None
 
         class _Chat:
