@@ -8,7 +8,7 @@ import abc
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -216,14 +216,181 @@ class OllamaProvider(BaseLLMProvider):
         return "Local audio transcription unavailable."
 
 
+class GeminiProvider(BaseLLMProvider):
+    """Google Gemini LLM provider via OpenAI-compatible endpoint."""
+
+    def __init__(self):
+        from openai import OpenAI
+        self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY") or ""
+        self.client = OpenAI(
+            api_key=self.api_key or "dummy",
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+        self.default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+    def chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 1000,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Dict[str, str]] = None,
+    ) -> Any:
+        active_model = model or self.default_model
+        logger.info(f"Dispatching completion to Gemini model={active_model} message_count={len(messages)}")
+
+        kwargs: Dict[str, Any] = {
+            "model": active_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        if response_format:
+            kwargs["response_format"] = response_format
+
+        return self.client.chat.completions.create(**kwargs)
+
+    def transcribe(self, audio_bytes: bytes, filename: str = "audio.ogg") -> str:
+        if os.getenv("GROQ_API_KEY"):
+            return GroqProvider().transcribe(audio_bytes, filename)
+        return "Audio transcription requires Groq Whisper or OpenAI."
+
+
+def classify_route_target(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
+    """
+    Intelligently select between 'gemini' and 'groq' based on:
+    1. Explicit user directive (@gemini vs @groq)
+    2. Query complexity, reasoning requirements, coding indicators
+    3. Casual conversation, speed-sensitive requests
+    """
+    user_text = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            content = m.get("content", "")
+            if isinstance(content, str):
+                user_text = content
+            elif isinstance(content, list):
+                # Multimodal or complex content structure -> Gemini
+                return "gemini", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            break
+
+    lower = user_text.lower()
+
+    # 1. Explicit user override
+    if "@gemini" in lower or "use gemini" in lower or "/gemini" in lower:
+        return "gemini", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    if "@groq" in lower or "use groq" in lower or "/groq" in lower:
+        return "groq", os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+    # 2. Code, programming, algorithms, deep debugging -> Gemini
+    code_indicators = (
+        "def ", "class ", "function ", "import ", "const ", "let ", "var ",
+        "```", "python", "typescript", "javascript", "sql", "html", "css",
+        "algorithm", "debug", "refactor", "exception", "traceback", "regex",
+        "dockerfile", "yaml", "json schema", "bug in my code", "write a script"
+    )
+    if any(ind in lower for ind in code_indicators):
+        return "gemini", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+    # 3. Deep reasoning, research, complex analysis, long queries (>100 words) -> Gemini
+    reasoning_indicators = (
+        "step by step", "deep dive", "in detail", "analyze", "analysis",
+        "pros and cons", "compare and contrast", "write an essay", "proof",
+        "mathematical", "calculate", "solve the equation", "comprehensive guide"
+    )
+    if any(ind in lower for ind in reasoning_indicators) or len(user_text.split()) > 100:
+        return "gemini", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+    # 4. Fast responses, casual chat, quick Q&A, greetings, formatting -> Groq
+    return "groq", os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+
+class RouterLLMProvider(BaseLLMProvider):
+    """
+    Intelligent Model Router:
+    Routes incoming prompts to Groq (for speed & low-latency dialogue) or
+    Gemini (for deep reasoning, code generation, long context, and analysis).
+    Includes automatic failover if the primary provider hits rate limits or errors.
+    """
+
+    def __init__(self):
+        self.groq_available = bool(os.getenv("GROQ_API_KEY"))
+        self.gemini_available = bool(os.getenv("GEMINI_API_KEY"))
+        self._groq_provider: Optional[GroqProvider] = GroqProvider() if self.groq_available else None
+        self._gemini_provider: Optional[GeminiProvider] = GeminiProvider() if self.gemini_available else None
+
+    def chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 1000,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Dict[str, str]] = None,
+    ) -> Any:
+        target, target_model = classify_route_target(messages)
+        active_model = model or target_model
+
+        if target == "gemini" and self._gemini_provider:
+            primary = ("gemini", self._gemini_provider, active_model)
+            secondary = ("groq", self._groq_provider, os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")) if self._groq_provider else None
+        elif self._groq_provider:
+            primary = ("groq", self._groq_provider, active_model)
+            secondary = ("gemini", self._gemini_provider, os.getenv("GEMINI_MODEL", "gemini-2.5-flash")) if self._gemini_provider else None
+        elif self._gemini_provider:
+            primary = ("gemini", self._gemini_provider, active_model)
+            secondary = None
+        else:
+            raise RuntimeError("RouterLLMProvider requires at least GROQ_API_KEY or GEMINI_API_KEY")
+
+        logger.info(f"[ROUTER] Directing completion to provider '{primary[0]}' (model: {primary[2]})")
+
+        try:
+            return primary[1].chat_completion(
+                messages=messages,
+                model=primary[2],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools,
+                response_format=response_format,
+            )
+        except Exception as e:
+            if secondary:
+                logger.warning(
+                    f"[ROUTER] Primary provider '{primary[0]}' failed ({e}). Auto-failing over to '{secondary[0]}'..."
+                )
+                return secondary[1].chat_completion(
+                    messages=messages,
+                    model=secondary[2],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    response_format=response_format,
+                )
+            raise e
+
+    def transcribe(self, audio_bytes: bytes, filename: str = "audio.ogg") -> str:
+        if self._groq_provider:
+            return self._groq_provider.transcribe(audio_bytes, filename)
+        return "Audio transcription requires Groq Whisper."
+
+
 def get_llm_provider() -> BaseLLMProvider:
     """
     Factory function returning the active LLM provider based on LLM_PROVIDER env variable.
-    Options: 'groq' (default), 'ollama', 'mock'.
+    Options: 'router' (dynamic Groq/Gemini routing), 'groq', 'gemini', 'ollama', 'mock'.
     """
     provider_name = os.getenv("LLM_PROVIDER", "groq").lower().strip()
     if provider_name == "mock" or os.getenv("ARGUS_TEST_MODE") == "1":
         return MockLLMProvider()
+    if provider_name == "router":
+        return RouterLLMProvider()
+    if provider_name == "gemini":
+        return GeminiProvider()
     if provider_name == "ollama":
         return OllamaProvider()
     return GroqProvider()

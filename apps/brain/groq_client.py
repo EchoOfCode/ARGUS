@@ -35,28 +35,35 @@ def _get_provider_config() -> Tuple[str, str, Optional[str], Dict[str, str], str
         )
         return "openrouter", api_key, base_url, headers, model
 
-    # 2. OpenAI Direct
+    # 2. Google Gemini Direct
+    if provider == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY") or ""
+        base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+        model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+        return "gemini", api_key, base_url, {}, model
+
+    # 3. OpenAI Direct
     if provider == "openai" or (not provider and os.getenv("OPENAI_API_KEY")):
         api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or ""
         base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
         model = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL") or "gpt-4o-mini"
         return "openai", api_key, base_url, {}, model
 
-    # 3. Ollama / Local LLM
+    # 4. Ollama / Local LLM
     if provider in {"ollama", "local"}:
         base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
         api_key = os.getenv("LLM_API_KEY", "ollama")
         model = os.getenv("LLM_MODEL", "llama3.3")
         return "ollama", api_key, base_url, {}, model
 
-    # 4. Custom Generic OpenAI-Compatible (Together, DeepSeek, Mistral, vLLM, LM Studio)
+    # 5. Custom Generic OpenAI-Compatible (Together, DeepSeek, Mistral, vLLM, LM Studio)
     if provider == "custom" or (not provider and os.getenv("LLM_BASE_URL")):
         api_key = os.getenv("LLM_API_KEY") or os.getenv("CUSTOM_API_KEY") or "dummy-key"
         base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
         model = os.getenv("LLM_MODEL") or "gpt-4o-mini"
         return "custom", api_key, base_url, {}, model
 
-    # 5. Default / Groq
+    # 6. Default / Groq
     api_key = os.getenv("GROQ_API_KEY") or os.getenv("LLM_API_KEY") or ""
     base_url = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
     model = (
@@ -67,17 +74,87 @@ def _get_provider_config() -> Tuple[str, str, Optional[str], Dict[str, str], str
     return "groq", api_key, base_url, {}, model
 
 
+class _RouterChatCompletions:
+    def __init__(self, groq_client: Optional[OpenAI], gemini_client: Optional[OpenAI], groq_model: str, gemini_model: str):
+        self.groq_client = groq_client
+        self.gemini_client = gemini_client
+        self.groq_model = groq_model
+        self.gemini_model = gemini_model
+
+    def create(self, **kwargs: Any) -> Any:
+        messages = kwargs.get("messages", [])
+        from llm_provider import classify_route_target
+        target_name, target_model = classify_route_target(messages)
+        active_model = kwargs.get("model") or target_model
+
+        if target_name == "gemini" and self.gemini_client:
+            primary_client, primary_model, p_name = self.gemini_client, active_model, "gemini"
+            secondary_client, secondary_model, s_name = self.groq_client, self.groq_model, "groq"
+        elif self.groq_client:
+            primary_client, primary_model, p_name = self.groq_client, active_model, "groq"
+            secondary_client, secondary_model, s_name = self.gemini_client, self.gemini_model, "gemini"
+        elif self.gemini_client:
+            primary_client, primary_model, p_name = self.gemini_client, active_model, "gemini"
+            secondary_client, secondary_model, s_name = None, None, None
+        else:
+            raise RuntimeError("No LLM client configured for router. Set GROQ_API_KEY or GEMINI_API_KEY.")
+
+        logger.info(f"[ROUTER] Directing completion to {p_name} ({primary_model})")
+        call_kwargs = dict(kwargs)
+        call_kwargs["model"] = primary_model
+
+        try:
+            return primary_client.chat.completions.create(**call_kwargs)
+        except Exception as e:
+            if secondary_client:
+                logger.warning(f"[ROUTER] {p_name} call failed ({e}). Auto-failing over to {s_name} ({secondary_model})...")
+                fallback_kwargs = dict(kwargs)
+                fallback_kwargs["model"] = secondary_model
+                return secondary_client.chat.completions.create(**fallback_kwargs)
+            raise e
+
+
+class _RouterClientWrapper:
+    def __init__(self):
+        groq_key = os.getenv("GROQ_API_KEY")
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+        groq_client = OpenAI(
+            api_key=groq_key or "dummy",
+            base_url=os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1"),
+        ) if groq_key else None
+
+        gemini_client = OpenAI(
+            api_key=gemini_key or "dummy",
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        ) if gemini_key else None
+
+        class _Chat:
+            def __init__(self, completions):
+                self.completions = completions
+
+        self.chat = _Chat(_RouterChatCompletions(groq_client, gemini_client, groq_model, gemini_model))
+
+
 def _get_client() -> Any:
     """Get an OpenAI-compatible client configured for the selected provider."""
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+
+    if os.getenv("ARGUS_TEST_MODE") == "1" or provider == "mock":
+        from llm_provider import MockLLMProvider
+        return MockLLMProvider()
+
+    if provider == "router":
+        return _RouterClientWrapper()
+
     provider, api_key, base_url, headers, _ = _get_provider_config()
 
     if not api_key and provider != "ollama":
-        if os.getenv("ARGUS_TEST_MODE") == "1" or provider == "mock":
-            from llm_provider import MockLLMProvider
-            return MockLLMProvider()
         raise RuntimeError(
             f"No API key configured for provider '{provider}'. "
-            "Please set OPENROUTER_API_KEY, GROQ_API_KEY, OPENAI_API_KEY, or LLM_API_KEY in backend/.env"
+            "Please set GEMINI_API_KEY, GROQ_API_KEY, OPENAI_API_KEY, or LLM_API_KEY in backend/.env"
         )
 
     return OpenAI(

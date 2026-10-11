@@ -35,12 +35,14 @@ class BrainSettings(BaseSettings):
     argus_port: int = Field(default=8000, alias="ARGUS_PORT")
 
     # ─── LLM Provider Settings ─────────────────────────────────
-    llm_provider: Literal["groq", "openrouter", "openai", "ollama", "custom", "mock"] = Field(
+    llm_provider: Literal["router", "groq", "gemini", "openrouter", "openai", "ollama", "custom", "mock"] = Field(
         default="groq",
         alias="LLM_PROVIDER",
     )
     groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
     groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
+    gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
+    gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
     openrouter_api_key: Optional[str] = Field(default=None, alias="OPENROUTER_API_KEY")
     openrouter_model: Optional[str] = Field(default=None, alias="OPENROUTER_MODEL")
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
