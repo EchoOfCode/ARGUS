@@ -47,6 +47,21 @@ def parse_reminder(
     if not actual_text:
         raise ValueError("No message text provided for reminder parsing")
 
+    # System 1 Fast-Path: Deterministic local time parsing (0 tokens)
+    try:
+        from system_one import SystemOneEngine
+        s1_parsed = SystemOneEngine.parse_time_expression(actual_text)
+        if s1_parsed:
+            due_iso, clean_text = s1_parsed
+            logger.info("System 1 parsed reminder locally (0 tokens): text='%s', due='%s'", clean_text, due_iso)
+            return {
+                "reminder_text": clean_text,
+                "due_at": due_iso,
+                "confidence": 1.0,
+            }
+    except Exception as s1_e:
+        logger.debug("System 1 reminder parsing bypass: %s", s1_e)
+
     ref_ts = reference_timestamp or datetime.now().isoformat()
     client = _get_client()
     model = _get_model()

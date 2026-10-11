@@ -1002,6 +1002,15 @@ def run_autonomous_agent(
     Can execute multiple tools in sequence (e.g. Draft message + Schedule event).
     When is_untrusted=True, enforces read-only tools and wraps prompt in security delimiters.
     """
+    # ─── System 1 Zero-Token Local Decision Interceptor ───────────────
+    try:
+        from system_one import SystemOneEngine
+        s1_result = SystemOneEngine.try_execute(user_prompt, is_untrusted=is_untrusted)
+        if s1_result is not None:
+            return s1_result
+    except Exception as s1_err:
+        logger.warning("System 1 local execution error (%s). Falling through to System 2.", s1_err)
+
     client = _get_client()
     model = _get_model()
     owner_name, owner_bio, owner_tone = _get_owner_info()
