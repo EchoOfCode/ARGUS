@@ -567,8 +567,8 @@ export async function handleMessage(
 
             if (personaRes && personaRes.reply_text) {
               // 6. Send response directly to the chat/group
-              await sendText(sock, chatJid, personaRes.reply_text, config);
-              incrementAutopilotCount(autopilotRule.jid);
+              await sendText(sock, chatJid, personaRes.reply_text, config, "autopilot_reply");
+              incrementAutopilotCount(autopilotRule.jid, config);
 
               // 7. Mirror transparent confirmation card back to dedicated ARGUS command group
               const targetLabel = isGroup ? `Group *${chatName || chatJid}*` : `*${senderName || autopilotRule.name}*`;

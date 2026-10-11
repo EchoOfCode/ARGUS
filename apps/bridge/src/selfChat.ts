@@ -2123,62 +2123,90 @@ async function handleAutopilotStatus(sock: WASocket, chatJid: string, config: Co
 }
 
 async function handleEnableAutopilot(sock: WASocket, chatJid: string, raw: string, config: Config): Promise<void> {
-  // Check if "for [Contact]" or "for [Contact]: [prompt]"
-  const forMatch = raw.match(/^for\s+([^:]+)(?::\s*(.*))?$/i);
-  if (forMatch) {
-    const targetQuery = forMatch[1].trim();
-    const customPrompt = forMatch[2] ? forMatch[2].trim() : undefined;
+  const clean = raw.trim();
 
-    let chat = findChatByNameOrQuery(targetQuery);
-    if (!chat) {
-      const cleanPhone = targetQuery.replace(/[^0-9]/g, "");
-      if (cleanPhone.length >= 7) {
-        chat = { jid: `${cleanPhone}@s.whatsapp.net`, name: targetQuery };
-        saveChatDirectory(chat.jid, chat.name, false);
-      } else {
-        chat = { jid: targetQuery.toLowerCase(), name: targetQuery };
-      }
-    }
-
-    enableAutopilot(chat.jid, chat.name, customPrompt);
-    const promptStr = customPrompt ? `\n📝 *Custom Context:* "${customPrompt}"` : "";
+  // 1. Global Busy Mode: "/autopilot on", "/autopilot on: [prompt]", "/autopilot on global", "/autopilot on all"
+  if (
+    !clean ||
+    clean.toLowerCase() === "on" ||
+    clean.toLowerCase() === "global" ||
+    clean.toLowerCase() === "all" ||
+    clean.startsWith(":")
+  ) {
+    const globalPrompt = clean.startsWith(":") ? clean.substring(1).trim() : "Autonomously assist and reply naturally as me";
+    enableAutopilot("GLOBAL", "Global Busy Mode", globalPrompt, config);
     await sendText(
       sock,
       chatJid,
-      `🤖 *Auto-Pilot ENABLED for ${chat.name}!*\nARGUS will now autonomously reply to incoming DMs from ${chat.name} as you in your personal voice.${promptStr}\n\n_To turn off:_ *autopilot off for ${chat.name}*`,
+      [
+        `🤖 *Global Auto-Pilot Busy Mode ENABLED!*`,
+        `────────────────────────────`,
+        `ARGUS will now autonomously reply to all incoming 1-on-1 DMs as you in your personal voice.`,
+        globalPrompt ? `📝 *Context:* "${globalPrompt}"` : "",
+        `────────────────────────────`,
+        `_To turn off:_ */autopilot off*`,
+      ].filter(Boolean).join("\n"),
       config
     );
     return;
   }
 
-  // Global busy mode: "autopilot on: studying for exams"
-  const globalPrompt = raw.replace(/^on\s*:?\s*/i, "").trim() || "busy right now";
-  enableAutopilot("GLOBAL", "Global Busy Mode", globalPrompt);
+  // 2. Specific Contact Mode: "on [Contact]", "on for [Contact]", "on [Contact]: [prompt]"
+  let targetQuery = clean.replace(/^(for|contact)\s+/i, "").trim();
+  let customPrompt: string | undefined = undefined;
+
+  const colonIdx = targetQuery.indexOf(":");
+  if (colonIdx !== -1) {
+    customPrompt = targetQuery.substring(colonIdx + 1).trim();
+    targetQuery = targetQuery.substring(0, colonIdx).trim();
+  }
+
+  // Find contact in directory
+  let chat = findChatByNameOrQuery(targetQuery);
+  if (!chat) {
+    const cleanPhone = targetQuery.replace(/[^0-9]/g, "");
+    if (cleanPhone.length >= 7) {
+      chat = { jid: `${cleanPhone}@s.whatsapp.net`, name: targetQuery };
+      saveChatDirectory(chat.jid, chat.name, false);
+    } else {
+      chat = { jid: targetQuery.toLowerCase(), name: targetQuery };
+    }
+  }
+
+  enableAutopilot(chat.jid, chat.name, customPrompt, config);
+  const promptStr = customPrompt ? `\n📝 *Custom Context:* "${customPrompt}"` : "";
   await sendText(
     sock,
     chatJid,
-    `🤖 *Global Auto-Pilot Busy Mode ENABLED!*\nARGUS will autonomously answer any incoming 1-on-1 DMs as you in your personal voice.\n📝 *Context:* "${globalPrompt}"\n\n_To turn off:_ *autopilot off*`,
+    [
+      `🤖 *Auto-Pilot ENABLED for ${chat.name}!*`,
+      `────────────────────────────`,
+      `ARGUS will now autonomously reply to incoming messages from *${chat.name}* as you in your personal voice.${promptStr}`,
+      `────────────────────────────`,
+      `_To turn off:_ */autopilot off ${chat.name}*`,
+    ].join("\n"),
     config
   );
 }
 
 async function handleDisableAutopilot(sock: WASocket, chatJid: string, raw: string, config: Config): Promise<void> {
-  if (!raw || raw.toLowerCase() === "all" || raw.toLowerCase() === "global") {
-    disableAllAutopilot();
-    await sendText(sock, chatJid, "🛑 *Auto-Pilot disabled for all contacts.*", config);
+  const clean = raw.trim();
+  if (!clean || clean.toLowerCase() === "all" || clean.toLowerCase() === "global" || clean.toLowerCase() === "off") {
+    disableAllAutopilot(config);
+    await sendText(sock, chatJid, "🛑 *Auto-Pilot disabled for all contacts & global mode.*", config);
     return;
   }
 
-  const targetQuery = raw.replace(/^for\s+/i, "").trim();
+  const targetQuery = clean.replace(/^(for|contact)\s+/i, "").trim();
   const chat = findChatByNameOrQuery(targetQuery);
   const targetJid = chat ? chat.jid : targetQuery;
   const targetName = chat ? chat.name : targetQuery;
 
-  const success = disableAutopilot(targetJid);
+  const success = disableAutopilot(targetJid, config);
   if (success) {
     await sendText(sock, chatJid, `🛑 *Auto-Pilot disabled for ${targetName}.*`, config);
   } else {
-    disableAllAutopilot();
+    disableAllAutopilot(config);
     await sendText(sock, chatJid, `🛑 *Auto-Pilot disabled.*`, config);
   }
 }

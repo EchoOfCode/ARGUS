@@ -50,9 +50,10 @@ export async function sendText(
   sock: WASocket,
   jid: string,
   text: string,
-  config: Config
+  config: Config,
+  triggerType: "owner_command" | "autopilot_reply" | "reminder_alert" = "owner_command"
 ): Promise<void> {
-  await rateLimitedSend(sock, jid, { text }, config);
+  await rateLimitedSend(sock, jid, { text }, config, triggerType);
 }
 
 export async function sendEventConfirmation(

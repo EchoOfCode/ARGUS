@@ -497,8 +497,8 @@ export async function syncAutopilotRulesFromBrain(config: any): Promise<number> 
   return memoryAutopilotRules.size;
 }
 
-export function enableAutopilot(jid: string, name: string, customPrompt?: string): void {
-  memoryAutopilotRules.set(jid, {
+export function enableAutopilot(jid: string, name: string, customPrompt?: string, config?: any): void {
+  const rule: AutopilotRule = {
     jid,
     name,
     status: "active",
@@ -507,16 +507,52 @@ export function enableAutopilot(jid: string, name: string, customPrompt?: string
     auto_reply_count: 0,
     created_at: new Date().toISOString(),
     last_replied_at: new Date().toISOString(),
-  });
+  };
+  memoryAutopilotRules.set(jid, rule);
+
+  if (config) {
+    import("./brainClient.js").then(({ callBrain }) => {
+      callBrain(config, "/api/autopilot/toggle", {
+        jid,
+        name,
+        status: "active",
+        tier: 2,
+        custom_prompt: customPrompt || null,
+      }).catch((err: any) => {
+        logger.warn({ err: err?.message, jid }, "Failed to persist autopilot rule to brain");
+      });
+    }).catch(() => {});
+  }
 }
 
-export function disableAutopilot(jid: string): boolean {
-  return memoryAutopilotRules.delete(jid);
+export function disableAutopilot(jid: string, config?: any): boolean {
+  const deleted = memoryAutopilotRules.delete(jid);
+  if (config) {
+    import("./brainClient.js").then(({ callBrain }) => {
+      callBrain(config, "/api/autopilot/toggle", {
+        jid,
+        status: "disabled",
+        tier: 0,
+      }).catch((err: any) => {
+        logger.warn({ err: err?.message, jid }, "Failed to persist disable autopilot to brain");
+      });
+    }).catch(() => {});
+  }
+  return deleted;
 }
 
-export function disableAllAutopilot(): boolean {
+export function disableAllAutopilot(config?: any): boolean {
   const count = memoryAutopilotRules.size;
   memoryAutopilotRules.clear();
+  if (config) {
+    import("./brainClient.js").then(({ callBrain }) => {
+      callBrain(config, "/api/autopilot/toggle", {
+        jid: "GLOBAL",
+        status: "disabled",
+        tier: 0,
+      }).catch(() => {});
+    }).catch(() => {});
+  }
   return count > 0;
 }
 
@@ -526,13 +562,45 @@ export function getActiveAutopilotRule(
   senderName?: string | null,
   chatName?: string | null
 ): AutopilotRule | null {
+  // 1. First check for specific contact rule
   for (const rule of memoryAutopilotRules.values()) {
-    if (rule.status === "active") {
-      if (rule.jid === chatJid || rule.jid === senderJid || rule.jid === "GLOBAL") {
+    if (rule.status === "active" && (rule.tier ?? 2) >= 1 && rule.jid !== "GLOBAL") {
+      // Direct JID match (phone JID, group JID, or @lid)
+      if (rule.jid === chatJid || rule.jid === senderJid) {
         return rule;
+      }
+
+      // Name match against incoming sender or chat
+      if (rule.name && rule.name !== "Global Busy Mode") {
+        const ruleNameLower = rule.name.toLowerCase().trim();
+        const sName = senderName?.toLowerCase().trim() || "";
+        const cName = chatName?.toLowerCase().trim() || "";
+
+        if (
+          (sName && (sName === ruleNameLower || sName.includes(ruleNameLower) || ruleNameLower.includes(sName))) ||
+          (cName && (cName === ruleNameLower || cName.includes(ruleNameLower) || ruleNameLower.includes(cName)))
+        ) {
+          return rule;
+        }
+
+        // Check against chat directory entry for @lid resolution
+        const dirData = chatDirectory.get(chatJid) || (senderJid ? chatDirectory.get(senderJid) : null);
+        if (dirData && dirData.name) {
+          const dName = dirData.name.toLowerCase().trim();
+          if (dName === ruleNameLower || dName.includes(ruleNameLower) || ruleNameLower.includes(dName)) {
+            return rule;
+          }
+        }
       }
     }
   }
+
+  // 2. Fall back to Global Autopilot rule (applies to all 1-on-1 DMs or explicit mentions)
+  const globalRule = memoryAutopilotRules.get("GLOBAL");
+  if (globalRule && globalRule.status === "active") {
+    return globalRule;
+  }
+
   return null;
 }
 

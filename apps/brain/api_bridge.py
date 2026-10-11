@@ -640,13 +640,38 @@ async def policy_evaluate_endpoint(
     # Fetch rule for contact
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT tier, status FROM autopilot_rules WHERE jid = ?", (data.target_jid,))
-        rule = cursor.fetchone()
         from db import get_kill_switch_status
         if get_kill_switch_status():
             latency = int((time.time() - start_time) * 1000)
             _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "kill_switch_engaged", "Global kill switch active")
             return {"verdict": "draft_only", "reason": "Global autonomy kill switch is engaged", "tier": 0}
+
+        # 1. Direct rule match by JID
+        cursor.execute("SELECT tier, status FROM autopilot_rules WHERE jid = ?", (data.target_jid,))
+        rule = cursor.fetchone()
+
+        # 2. If target_jid is an @lid or not found by direct JID, check by contact name in chat_directory
+        if not rule or rule["status"] != "active" or rule["tier"] == 0:
+            cursor.execute(
+                """
+                SELECT ar.tier, ar.status 
+                FROM autopilot_rules ar
+                JOIN chat_directory cd ON LOWER(cd.name) = LOWER(ar.name)
+                WHERE cd.jid = ? AND ar.status = 'active' AND ar.tier > 0
+                ORDER BY ar.tier DESC LIMIT 1
+                """,
+                (data.target_jid,),
+            )
+            matched_rule = cursor.fetchone()
+            if matched_rule:
+                rule = matched_rule
+
+        # 3. Check for Global Autopilot rule (applies to all 1-on-1 incoming DMs when enabled)
+        if not rule or rule["status"] != "active" or rule["tier"] == 0:
+            cursor.execute("SELECT tier, status FROM autopilot_rules WHERE jid = 'GLOBAL' AND status = 'active'")
+            global_rule = cursor.fetchone()
+            if global_rule:
+                rule = global_rule
 
         tier = rule["tier"] if rule and rule["status"] == "active" else 0
 
