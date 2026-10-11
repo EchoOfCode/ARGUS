@@ -132,6 +132,45 @@ async def ingest_message_endpoint(
     return {"success": True, "is_new": is_new, "id": record_id}
 
 
+# ─── TODOS ──────────────────────────────────────────────────────
+
+@bridge_router.get("/todos")
+async def get_todos_endpoint(
+    request: Request,
+    chat_jid: Optional[str] = None,
+    include_completed: bool = False,
+    x_argus_signature: Optional[str] = Header(None),
+    x_argus_timestamp: Optional[str] = Header(None),
+    x_argus_secret: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Fetch active or all todo tasks."""
+    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if include_completed:
+            cursor.execute("SELECT * FROM todos ORDER BY id DESC")
+        else:
+            cursor.execute("SELECT * FROM todos WHERE completed = 0 ORDER BY id DESC")
+        todos = [dict(r) for r in cursor.fetchall()]
+        return {"todos": todos}
+
+
+@bridge_router.post("/todos")
+async def create_todo_endpoint(
+    data: TodoCreateRequest,
+    request: Request,
+    x_argus_signature: Optional[str] = Header(None),
+    x_argus_timestamp: Optional[str] = Header(None),
+    x_argus_secret: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Create a new todo item in the central database."""
+    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO todos (chat_jid, text, completed) VALUES (?, ?, 0)", (data.chat_jid, data.text))
+        return {"success": True, "id": cursor.lastrowid, "text": data.text}
+
+
 # ─── REMINDERS ──────────────────────────────────────────────────
 
 @bridge_router.get("/reminders/due")

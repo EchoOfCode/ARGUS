@@ -84,10 +84,68 @@ def test_tool_classifications():
     assert TOOL_CLASSIFICATIONS["search_chat_history"] == "read"
     assert TOOL_CLASSIFICATIONS["get_agenda"] == "read"
     assert TOOL_CLASSIFICATIONS["schedule_event"] == "write"
+    assert TOOL_CLASSIFICATIONS["cancel_event"] == "write"
     assert TOOL_CLASSIFICATIONS["create_reminder"] == "write"
+    assert TOOL_CLASSIFICATIONS["cancel_reminder"] == "write"
+    assert TOOL_CLASSIFICATIONS["reschedule_reminder"] == "write"
     assert TOOL_CLASSIFICATIONS["create_todo"] == "write"
+    assert TOOL_CLASSIFICATIONS["complete_todo"] == "write"
+    assert TOOL_CLASSIFICATIONS["delete_todo"] == "write"
     assert TOOL_CLASSIFICATIONS["record_expense"] == "write"
+    assert TOOL_CLASSIFICATIONS["settle_debt"] == "write"
+    assert TOOL_CLASSIFICATIONS["set_autopilot_tier"] == "write"
+    assert TOOL_CLASSIFICATIONS["set_kill_switch"] == "write"
     assert TOOL_CLASSIFICATIONS["draft_whatsapp_message"] == "send"
+
+
+def test_new_crud_and_operational_tools():
+    """Verify complete, delete, cancel, reschedule, and kill switch tools work properly."""
+    from agent_core import (
+        tool_create_todo,
+        tool_complete_todo,
+        tool_delete_todo,
+        tool_create_reminder,
+        tool_cancel_reminder,
+        tool_reschedule_reminder,
+        tool_set_kill_switch,
+    )
+    from db import get_kill_switch_status
+
+    # 1. Todo lifecycle
+    t = tool_create_todo("Buy groceries for dinner")
+    assert t["success"] is True
+    t_id = t["todo_id"]
+
+    comp = tool_complete_todo(todo_id=t_id)
+    assert comp["success"] is True
+    assert comp["completed"] is True
+
+    # 2. Match text delete
+    t2 = tool_create_todo("Clean workstation desk")
+    del_res = tool_delete_todo(match_text="workstation")
+    assert del_res["success"] is True
+
+    # 3. Reminder lifecycle
+    r = tool_create_reminder("Call accountant", "2026-10-15 10:00")
+    assert r["success"] is True
+    r_id = r["reminder_id"]
+
+    resch = tool_reschedule_reminder(new_due_at="2026-10-15 15:00", reminder_id=r_id)
+    assert resch["success"] is True
+    assert resch["new_due_at"] == "2026-10-15 15:00"
+
+    canc = tool_cancel_reminder(reminder_id=r_id)
+    assert canc["success"] is True
+    assert canc["status"] == "cancelled"
+
+    # 4. Kill switch toggle
+    ks_on = tool_set_kill_switch(active=True)
+    assert ks_on["success"] is True
+    assert get_kill_switch_status() is True
+
+    ks_off = tool_set_kill_switch(active=False)
+    assert ks_off["success"] is True
+    assert get_kill_switch_status() is False
 
 
 def test_prompt_injection_read_only_restriction():

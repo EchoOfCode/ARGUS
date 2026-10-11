@@ -524,8 +524,12 @@ export async function handleSelfChatMessage(
       case "todo":
       case "todos":
       case "task":
-      case "tasks": {
-        if (!args || args === "list" || args === "show") {
+      case "tasks":
+      case "todaytasks":
+      case "todaytodos":
+      case "mytasks":
+      case "mytodos": {
+        if (!args || args === "list" || args === "show" || cmd === "todaytasks" || cmd === "todaytodos" || cmd === "mytasks" || cmd === "mytodos") {
           await handleListTodos(sock, chatJid, config);
           return;
         }
@@ -533,6 +537,7 @@ export async function handleSelfChatMessage(
           const item = args.substring(4).trim();
           if (item) {
             const t = addTodo(chatJid, item);
+            callBrain(config, "/api/todos", { chat_jid: chatJid, text: item }).catch(() => {});
             await sendText(sock, chatJid, `📝 Added: *${t.text}* (Todo #${t.id})`, config);
             return;
           }
@@ -562,6 +567,7 @@ export async function handleSelfChatMessage(
           }
         }
         const t = addTodo(chatJid, args);
+        callBrain(config, "/api/todos", { chat_jid: chatJid, text: args }).catch(() => {});
         await sendText(sock, chatJid, `📝 Added: *${t.text}* (Todo #${t.id})`, config);
         return;
       }
@@ -649,6 +655,27 @@ export async function handleSelfChatMessage(
           }
         }
         await sendError(sock, chatJid, "Usage: /ask [question]", config);
+        return;
+      }
+
+      default: {
+        // Unknown or custom slash command (e.g. /summary, /schedule, /weather, etc.)
+        // Pass directly to the ReAct agent with recent history so it reasons intelligently!
+        const recentHistory = getRecentMessages(chatJid, 8).map((m) => ({
+          text: m.message_text,
+          is_from_me: m.is_from_me === 1,
+          timestamp: m.timestamp,
+        }));
+        const askResult = await callBrain(config, "/ask", {
+          question: rawCmd,
+          use_web_search: false,
+          recent_history: recentHistory,
+        });
+        if (askResult && askResult.answer) {
+          await sendText(sock, chatJid, askResult.answer, config);
+        } else {
+          await sendText(sock, chatJid, `Unknown command: /${cmd}. Type /help for available commands.`, config);
+        }
         return;
       }
     }
@@ -1105,22 +1132,67 @@ export async function handleSelfChatMessage(
       }
 
       case "todo": {
-        if (/\b(show|list|what\s+are|my\s+(todo|task)s?|view)\b/i.test(text)) {
+        const data = result.extract_data;
+
+        // 1. List / show tasks
+        if (
+          data?.action === "list" ||
+          /\b(show|list|what\s+are|my\s+(todo|task)s?|view|today'?s?\s*(task|todo)s?)\b/i.test(text)
+        ) {
           await handleListTodos(sock, chatJid, config);
           break;
         }
 
-        const data = result.extract_data;
-        if (data && data.text) {
+        // 2. Complete, delete, or modify tasks
+        if (/\b(delete|remove|clear|scratch|drop|done|complete|finish|check\s*off|undo|cancel)\b/i.test(text)) {
+          const recentHistory = getRecentMessages(chatJid, 8).map((m) => ({
+            text: m.message_text,
+            is_from_me: m.is_from_me === 1,
+            timestamp: m.timestamp,
+          }));
+          const askResult = await callBrain(config, "/ask", {
+            question: text,
+            use_web_search: false,
+            recent_history: recentHistory,
+          });
+          if (askResult && askResult.answer) {
+            await sendText(sock, chatJid, askResult.answer, config);
+          } else {
+            await sendError(sock, chatJid, "Could not update todo item.", config);
+          }
+          break;
+        }
+
+        // 3. Explicit addition
+        if (data && data.action === "add" && data.text) {
           const todo = addTodo(chatJid, data.text);
+          callBrain(config, "/api/todos", { chat_jid: chatJid, text: data.text }).catch(() => {});
           await sendText(sock, chatJid, `📝 Added: *${todo.text}* (Todo #${todo.id})`, config);
-        } else {
-          const cleanText = text.replace(/^(add|todo|task)\s+(to\s+my\s+list\s+)?/i, "").trim();
+        } else if (/^(add|create|new)\s+(to\s+my\s+)?(todo|task)\b/i.test(text)) {
+          const cleanText = text.replace(/^(add|create|new)\s+(to\s+my\s+)?(todo|task)\s*(list)?:?\s*/i, "").trim();
           if (cleanText) {
             const todo = addTodo(chatJid, cleanText);
+            callBrain(config, "/api/todos", { chat_jid: chatJid, text: cleanText }).catch(() => {});
             await sendText(sock, chatJid, `📝 Added: *${todo.text}* (Todo #${todo.id})`, config);
           } else {
             await sendError(sock, chatJid, "What would you like to add to your todo list?", config);
+          }
+        } else {
+          // Conversational or ambiguous input — pass to ReAct agent with history
+          const recentHistory = getRecentMessages(chatJid, 8).map((m) => ({
+            text: m.message_text,
+            is_from_me: m.is_from_me === 1,
+            timestamp: m.timestamp,
+          }));
+          const askResult = await callBrain(config, "/ask", {
+            question: text,
+            use_web_search: false,
+            recent_history: recentHistory,
+          });
+          if (askResult && askResult.answer) {
+            await sendText(sock, chatJid, askResult.answer, config);
+          } else {
+            await sendError(sock, chatJid, "Could not process that task request.", config);
           }
         }
         break;

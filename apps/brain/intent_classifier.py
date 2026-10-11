@@ -102,7 +102,19 @@ def classify_intent_rules(message_text: str, is_self_chat: bool) -> Dict[str, An
         if lower.startswith("remind me ") or lower.startswith("reminder "):
             return {"intent": "reminder", "confidence": 1.0, "should_respond": True, "extract_data": None}
 
-        # 7. Fast greetings & Chief of Staff check-ins (0ms instant resolution)
+        # 7. Todo & Task rules
+        if (
+            re.search(r"^(show|list|view|what\s+are|get|check|today'?s?)\s+(my\s+)?(todos?|tasks?)\b", lower)
+            or re.search(r"^/(todaytasks|todaytodos|todos|tasks|todo|task)\b", lower)
+            or lower in ["todos", "tasks", "my todos", "my tasks", "todo list", "task list"]
+        ):
+            return {"intent": "todo", "confidence": 1.0, "should_respond": True, "extract_data": {"action": "list"}}
+
+        if re.search(r"^(add|create|new)\s+(to\s+my\s+)?(todo|task)\s*(list)?:?\s*", lower):
+            task_text = re.sub(r"^(add|create|new)\s+(to\s+my\s+)?(todo|task)\s*(list)?:?\s*", "", text, flags=re.IGNORECASE).strip()
+            return {"intent": "todo", "confidence": 1.0, "should_respond": True, "extract_data": {"action": "add", "text": task_text}}
+
+        # 8. Fast greetings & Chief of Staff check-ins (0ms instant resolution)
         if lower in ["hi", "hello", "hey", "yo", "sup", "howdy", "gm", "good morning", "good evening", "online", "status", "ping", "are you there", "argus"]:
             return {"intent": "general_qa", "confidence": 1.0, "should_respond": True, "extract_data": None}
 

@@ -32,10 +32,18 @@ TOOL_CLASSIFICATIONS: Dict[str, str] = {
     "get_financial_summary": "read",
     "web_search": "read",
     "schedule_event": "write",
+    "cancel_event": "write",
     "create_reminder": "write",
+    "cancel_reminder": "write",
+    "reschedule_reminder": "write",
     "create_todo": "write",
+    "complete_todo": "write",
+    "delete_todo": "write",
     "record_expense": "write",
+    "settle_debt": "write",
     "manage_memory": "write",
+    "set_autopilot_tier": "write",
+    "set_kill_switch": "write",
     "draft_whatsapp_message": "send",
 }
 
@@ -258,6 +266,236 @@ def tool_create_todo(text: str) -> Dict[str, Any]:
         return {"success": True, "todo_id": cursor.lastrowid, "text": text}
     finally:
         conn.close()
+
+
+def tool_complete_todo(todo_id: Optional[int] = None, match_text: Optional[str] = None) -> Dict[str, Any]:
+    """Mark a todo item as completed. Matches by ID or substring, or completes the most recent pending todo."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        if todo_id is not None:
+            cursor.execute("SELECT id, text FROM todos WHERE id = ?", (todo_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"Todo #{todo_id} not found."}
+            cursor.execute("UPDATE todos SET completed = 1, completed_at = datetime('now') WHERE id = ?", (todo_id,))
+            conn.commit()
+            return {"success": True, "todo_id": todo_id, "text": row["text"], "completed": True}
+        elif match_text:
+            cursor.execute("SELECT id, text FROM todos WHERE completed = 0 AND text LIKE ? ORDER BY id DESC LIMIT 1", (f"%{match_text}%",))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"No active todo matching '{match_text}' found."}
+            cursor.execute("UPDATE todos SET completed = 1, completed_at = datetime('now') WHERE id = ?", (row["id"],))
+            conn.commit()
+            return {"success": True, "todo_id": row["id"], "text": row["text"], "completed": True}
+        else:
+            cursor.execute("SELECT id, text FROM todos WHERE completed = 0 ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": "No pending todos found to complete."}
+            cursor.execute("UPDATE todos SET completed = 1, completed_at = datetime('now') WHERE id = ?", (row["id"],))
+            conn.commit()
+            return {"success": True, "todo_id": row["id"], "text": row["text"], "completed": True}
+    finally:
+        conn.close()
+
+
+def tool_delete_todo(todo_id: Optional[int] = None, match_text: Optional[str] = None, clear_all_completed: bool = False) -> Dict[str, Any]:
+    """Permanently delete a todo item, or clear all completed tasks."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        if clear_all_completed:
+            cursor.execute("DELETE FROM todos WHERE completed = 1")
+            count = cursor.rowcount
+            conn.commit()
+            return {"success": True, "cleared_completed_count": count}
+        if todo_id is not None:
+            cursor.execute("SELECT id, text FROM todos WHERE id = ?", (todo_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"Todo #{todo_id} not found."}
+            cursor.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+            conn.commit()
+            return {"success": True, "deleted_id": todo_id, "text": row["text"]}
+        elif match_text:
+            cursor.execute("SELECT id, text FROM todos WHERE text LIKE ? ORDER BY id DESC LIMIT 1", (f"%{match_text}%",))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"No todo matching '{match_text}' found."}
+            cursor.execute("DELETE FROM todos WHERE id = ?", (row["id"],))
+            conn.commit()
+            return {"success": True, "deleted_id": row["id"], "text": row["text"]}
+        else:
+            cursor.execute("SELECT id, text FROM todos ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": "No todos found to delete."}
+            cursor.execute("DELETE FROM todos WHERE id = ?", (row["id"],))
+            conn.commit()
+            return {"success": True, "deleted_id": row["id"], "text": row["text"]}
+    finally:
+        conn.close()
+
+
+def tool_cancel_reminder(reminder_id: Optional[int] = None, match_text: Optional[str] = None) -> Dict[str, Any]:
+    """Cancel or dismiss a pending reminder."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        if reminder_id is not None:
+            cursor.execute("SELECT id, reminder_text FROM reminders WHERE id = ?", (reminder_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"Reminder #{reminder_id} not found."}
+            cursor.execute("UPDATE reminders SET status = 'cancelled' WHERE id = ?", (reminder_id,))
+            conn.commit()
+            return {"success": True, "reminder_id": reminder_id, "text": row["reminder_text"], "status": "cancelled"}
+        elif match_text:
+            cursor.execute("SELECT id, reminder_text FROM reminders WHERE status = 'pending' AND reminder_text LIKE ? ORDER BY id DESC LIMIT 1", (f"%{match_text}%",))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"No pending reminder matching '{match_text}' found."}
+            cursor.execute("UPDATE reminders SET status = 'cancelled' WHERE id = ?", (row["id"],))
+            conn.commit()
+            return {"success": True, "reminder_id": row["id"], "text": row["reminder_text"], "status": "cancelled"}
+        else:
+            cursor.execute("SELECT id, reminder_text FROM reminders WHERE status = 'pending' ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": "No pending reminders found to cancel."}
+            cursor.execute("UPDATE reminders SET status = 'cancelled' WHERE id = ?", (row["id"],))
+            conn.commit()
+            return {"success": True, "reminder_id": row["id"], "text": row["reminder_text"], "status": "cancelled"}
+    finally:
+        conn.close()
+
+
+def tool_reschedule_reminder(new_due_at: str, reminder_id: Optional[int] = None, match_text: Optional[str] = None) -> Dict[str, Any]:
+    """Reschedule a pending reminder to a new date and time."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        if reminder_id is not None:
+            cursor.execute("SELECT id, reminder_text FROM reminders WHERE id = ?", (reminder_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"Reminder #{reminder_id} not found."}
+            cursor.execute("UPDATE reminders SET due_at = ?, status = 'pending' WHERE id = ?", (new_due_at, reminder_id))
+            conn.commit()
+            return {"success": True, "reminder_id": reminder_id, "text": row["reminder_text"], "new_due_at": new_due_at}
+        elif match_text:
+            cursor.execute("SELECT id, reminder_text FROM reminders WHERE status = 'pending' AND reminder_text LIKE ? ORDER BY id DESC LIMIT 1", (f"%{match_text}%",))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"No pending reminder matching '{match_text}' found."}
+            cursor.execute("UPDATE reminders SET due_at = ?, status = 'pending' WHERE id = ?", (new_due_at, row["id"]))
+            conn.commit()
+            return {"success": True, "reminder_id": row["id"], "text": row["reminder_text"], "new_due_at": new_due_at}
+        else:
+            cursor.execute("SELECT id, reminder_text FROM reminders WHERE status = 'pending' ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": "No pending reminders found."}
+            cursor.execute("UPDATE reminders SET due_at = ?, status = 'pending' WHERE id = ?", (new_due_at, row["id"]))
+            conn.commit()
+            return {"success": True, "reminder_id": row["id"], "text": row["reminder_text"], "new_due_at": new_due_at}
+    finally:
+        conn.close()
+
+
+def tool_cancel_event(event_id: Optional[int] = None, title: Optional[str] = None) -> Dict[str, Any]:
+    """Cancel or remove a scheduled event."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        if event_id is not None:
+            cursor.execute("SELECT id, title, event_date FROM pending_events WHERE id = ?", (event_id,))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"Event #{event_id} not found."}
+            cursor.execute("UPDATE pending_events SET status = 'cancelled' WHERE id = ?", (event_id,))
+            conn.commit()
+            return {"success": True, "event_id": event_id, "title": row["title"], "status": "cancelled"}
+        elif title:
+            cursor.execute("SELECT id, title, event_date FROM pending_events WHERE status = 'confirmed' AND title LIKE ? ORDER BY id DESC LIMIT 1", (f"%{title}%",))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": f"No confirmed event matching '{title}'."}
+            cursor.execute("UPDATE pending_events SET status = 'cancelled' WHERE id = ?", (row["id"],))
+            conn.commit()
+            return {"success": True, "event_id": row["id"], "title": row["title"], "status": "cancelled"}
+        else:
+            cursor.execute("SELECT id, title FROM pending_events WHERE status = 'confirmed' ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": "No confirmed events found to cancel."}
+            cursor.execute("UPDATE pending_events SET status = 'cancelled' WHERE id = ?", (row["id"],))
+            conn.commit()
+            return {"success": True, "event_id": row["id"], "title": row["title"], "status": "cancelled"}
+    finally:
+        conn.close()
+
+
+def tool_settle_debt(person: str, amount: Optional[float] = None) -> Dict[str, Any]:
+    """Settle or clear money owed to or by a specific person."""
+    from db import settle_debt
+    return settle_debt(person=person, amount=amount)
+
+
+def tool_set_autopilot_tier(contact_name_or_phone: str, tier: int) -> Dict[str, Any]:
+    """Set the autonomy level for a contact: 0 (Draft Only), 1 (Supervised), or 2 (Autonomous)."""
+    conn = get_bridge_db()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT jid, name FROM chat_directory WHERE name LIKE ? OR jid LIKE ? LIMIT 1",
+            (f"%{contact_name_or_phone}%", f"%{contact_name_or_phone}%"),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"success": False, "error": f"Contact '{contact_name_or_phone}' not found in address book."}
+        target_jid = row["jid"]
+        target_name = row["name"]
+        status = "active" if tier > 0 else "disabled"
+        cursor.execute(
+            """
+            INSERT INTO autopilot_rules (jid, name, status, tier, created_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(jid) DO UPDATE SET name = excluded.name, status = excluded.status, tier = excluded.tier
+            """,
+            (target_jid, target_name, status, tier),
+        )
+        conn.commit()
+        tier_names = {0: "Tier 0 (Draft Only)", 1: "Tier 1 (Supervised)", 2: "Tier 2 (Autonomous)"}
+        return {"success": True, "contact": target_name, "jid": target_jid, "tier": tier, "description": tier_names.get(tier, f"Tier {tier}")}
+    finally:
+        conn.close()
+
+
+def tool_set_kill_switch(active: bool) -> Dict[str, Any]:
+    """Engage (active=True) or disengage (active=False) the global autonomous kill switch."""
+    from db import set_kill_switch_status
+    set_kill_switch_status(active)
+    return {
+        "success": True,
+        "kill_switch_active": active,
+        "status": "EMERGENCY HALTED — All autonomous auto-replies blocked system-wide." if active else "NORMAL — Autopilot enabled for configured contacts.",
+    }
+
 
 
 def tool_draft_whatsapp_message(recipient_name: str, message_text: str) -> Dict[str, Any]:
@@ -630,6 +868,123 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "complete_todo",
+            "description": "Mark a todo task as completed or checked off. Can specify todo_id or match_text, or leave empty to complete the most recent pending todo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todo_id": {"type": "integer", "description": "Specific ID of the todo task"},
+                    "match_text": {"type": "string", "description": "Keyword or description to find and complete"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_todo",
+            "description": "Permanently delete a todo task, or clear all completed tasks. Can specify todo_id, match_text, or set clear_all_completed=true. If empty, deletes the most recent todo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todo_id": {"type": "integer", "description": "Specific ID of the todo task to delete"},
+                    "match_text": {"type": "string", "description": "Description or substring of the todo to delete"},
+                    "clear_all_completed": {"type": "boolean", "description": "If true, permanently clears all already-completed tasks"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_reminder",
+            "description": "Cancel or dismiss a pending reminder. Can specify reminder_id or match_text, or cancel the most recent pending reminder.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reminder_id": {"type": "integer", "description": "Specific ID of reminder to cancel"},
+                    "match_text": {"type": "string", "description": "Text or keyword of reminder to cancel"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reschedule_reminder",
+            "description": "Reschedule a pending reminder to a new date and time.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "new_due_at": {"type": "string", "description": "New ISO timestamp or YYYY-MM-DD HH:MM"},
+                    "reminder_id": {"type": "integer", "description": "Specific reminder ID"},
+                    "match_text": {"type": "string", "description": "Text or keyword to match reminder"},
+                },
+                "required": ["new_due_at"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_event",
+            "description": "Cancel or remove a scheduled calendar event.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_id": {"type": "integer", "description": "Specific event ID"},
+                    "title": {"type": "string", "description": "Title or keyword of event to cancel"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "settle_debt",
+            "description": "Settle, clear, or record debt payback with a person.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "person": {"type": "string", "description": "Name of the person"},
+                    "amount": {"type": "number", "description": "Optional amount settled. If omitted, clears all debts with this person."},
+                },
+                "required": ["person"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_autopilot_tier",
+            "description": "Set the autonomy tier for a WhatsApp contact: 0 (Draft Only / Off), 1 (Supervised), or 2 (Autonomous auto-replies).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contact_name_or_phone": {"type": "string", "description": "Name or phone number of contact"},
+                    "tier": {"type": "integer", "enum": [0, 1, 2], "description": "0=Draft Only, 1=Supervised, 2=Autonomous"},
+                },
+                "required": ["contact_name_or_phone", "tier"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_kill_switch",
+            "description": "Toggle the global emergency kill switch to immediately halt or re-enable all autonomous actions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "active": {"type": "boolean", "description": "True to engage emergency halt (stop all auto-replies), False to disengage"},
+                },
+                "required": ["active"],
+            },
+        },
+    },
 ]
 
 
@@ -772,6 +1127,47 @@ Current Reference Time: {now_iso}
                     )
                 elif fn_name == "create_todo":
                     tool_output = tool_create_todo(text=fn_args.get("text", "Task"))
+                elif fn_name == "complete_todo":
+                    tool_output = tool_complete_todo(
+                        todo_id=fn_args.get("todo_id"),
+                        match_text=fn_args.get("match_text"),
+                    )
+                elif fn_name == "delete_todo":
+                    tool_output = tool_delete_todo(
+                        todo_id=fn_args.get("todo_id"),
+                        match_text=fn_args.get("match_text"),
+                        clear_all_completed=bool(fn_args.get("clear_all_completed", False)),
+                    )
+                elif fn_name == "cancel_reminder":
+                    tool_output = tool_cancel_reminder(
+                        reminder_id=fn_args.get("reminder_id"),
+                        match_text=fn_args.get("match_text"),
+                    )
+                elif fn_name == "reschedule_reminder":
+                    tool_output = tool_reschedule_reminder(
+                        new_due_at=fn_args.get("new_due_at", ""),
+                        reminder_id=fn_args.get("reminder_id"),
+                        match_text=fn_args.get("match_text"),
+                    )
+                elif fn_name == "cancel_event":
+                    tool_output = tool_cancel_event(
+                        event_id=fn_args.get("event_id"),
+                        title=fn_args.get("title"),
+                    )
+                elif fn_name == "settle_debt":
+                    tool_output = tool_settle_debt(
+                        person=fn_args.get("person", ""),
+                        amount=fn_args.get("amount"),
+                    )
+                elif fn_name == "set_autopilot_tier":
+                    tool_output = tool_set_autopilot_tier(
+                        contact_name_or_phone=fn_args.get("contact_name_or_phone", ""),
+                        tier=int(fn_args.get("tier", 0)),
+                    )
+                elif fn_name == "set_kill_switch":
+                    tool_output = tool_set_kill_switch(
+                        active=bool(fn_args.get("active", True)),
+                    )
                 elif fn_name == "get_todos_and_reminders":
                     tool_output = tool_get_todos_and_reminders()
                 elif fn_name == "get_autopilot_status":
