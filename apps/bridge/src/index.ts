@@ -180,6 +180,17 @@ async function connectToWhatsApp(): Promise<void> {
           await callBrain(config, "/api/contacts/sync", { contacts: contactList }).catch(() => {});
         }
         logger.info({ groupCount: contactList.length }, "Synced WhatsApp groups into Brain directory");
+
+        // Auto-pin command group JID if not explicitly configured (ADR 0002)
+        if (!config.commandGroupJid && config.dedicatedGroupName) {
+          const matchedGroup = Object.entries(groups).find(
+            ([_, meta]) => meta && meta.subject && meta.subject.trim().toLowerCase() === config.dedicatedGroupName.toLowerCase()
+          );
+          if (matchedGroup) {
+            config.commandGroupJid = matchedGroup[0];
+            logger.info({ groupJid: matchedGroup[0], groupName: config.dedicatedGroupName }, "Auto-pinned WhatsApp command group JID from group name");
+          }
+        }
       } catch (err) {
         logger.warn({ err }, "Could not auto-fetch group directory");
       }
