@@ -111,3 +111,39 @@ def test_system_one_untrusted_isolation():
     # Safe greetings are allowed
     res_greet = SystemOneEngine.try_execute("hello", is_untrusted=True)
     assert res_greet is not None
+
+
+def test_system_one_offline_online_mode_toggle():
+    """Verify switching between offline-only and online modes."""
+    from agent_core import run_autonomous_agent
+    from db import get_offline_mode
+
+    # 1. Enable offline mode
+    res_off = SystemOneEngine.try_execute("/offline")
+    assert res_off is not None
+    assert "Offline Mode Enabled" in res_off
+    assert get_offline_mode() is True
+
+    # 2. Check mode command
+    res_mode = SystemOneEngine.try_execute("/mode")
+    assert res_mode is not None
+    assert "OFFLINE" in res_mode
+
+    # 3. Status shows offline mode
+    res_stat = SystemOneEngine.try_execute("/status")
+    assert res_stat is not None
+    assert "OFFLINE" in res_stat
+
+    # 4. Complex question in offline mode is blocked from calling cloud LLM
+    agent_res = run_autonomous_agent("Explain quantum mechanics")
+    assert "Offline Mode is Active" in agent_res
+
+    # 5. Local System 1 commands STILL WORK in offline mode!
+    res_todo = SystemOneEngine.try_execute("/todaytasks")
+    assert res_todo is not None
+
+    # 6. Re-enable online mode
+    res_on = SystemOneEngine.try_execute("/online")
+    assert res_on is not None
+    assert "Online Mode Enabled" in res_on
+    assert get_offline_mode() is False

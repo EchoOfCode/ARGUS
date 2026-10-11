@@ -1011,6 +1011,18 @@ def run_autonomous_agent(
     except Exception as s1_err:
         logger.warning("System 1 local execution error (%s). Falling through to System 2.", s1_err)
 
+    # ─── Offline Mode Guard (Strict Zero Cloud Tokens) ─────────────────
+    from db import get_offline_mode
+    if get_offline_mode():
+        logger.info("[OFFLINE MODE] Intercepted non-System-1 query; zero cloud tokens spent.")
+        return (
+            "📴 *Offline Mode is Active.*\n\n"
+            "This query requires Cloud AI (System 2), but ARGUS is currently set to "
+            "Offline-Only mode (System 1 Zero-Token).\n\n"
+            "• Your tasks, reminders, expenses, status, and local commands work 100% locally.\n"
+            "• Type */online* to re-enable Cloud AI."
+        )
+
     client = _get_client()
     model = _get_model()
     owner_name, owner_bio, owner_tone = _get_owner_info()

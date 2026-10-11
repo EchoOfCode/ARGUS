@@ -116,9 +116,10 @@ class SystemOneEngine:
             return "🧹 *Context cleaned up.* Memory and active state are refreshed and ready."
 
         # ─── 2. DIAGNOSTIC / STATUS / HEALTH ─────────────────────────
-        if lower in ["/status", "status", "/ping", "ping", "/health", "health", "are you there", "online"]:
-            from db import get_db, get_kill_switch_status
+        if lower in ["/status", "status", "/ping", "ping", "/health", "health", "are you there"]:
+            from db import get_db, get_kill_switch_status, get_offline_mode
             kill = get_kill_switch_status()
+            offline = get_offline_mode()
             with get_db() as conn:
                 c = conn.cursor()
                 c.execute("SELECT count(*) FROM todos WHERE completed = 0")
@@ -129,11 +130,44 @@ class SystemOneEngine:
             logger.info("[SYSTEM 1] Fast-path executed: System status (0 tokens)")
             return (
                 f"🛡️ *ARGUS System Status*\n\n"
+                f"• *Mode:* {'📴 OFFLINE (System 1 Only - Zero Tokens)' if offline else '🌐 ONLINE (System 1 Local + System 2 Cloud)'}\n"
                 f"• *Status:* Online & Operational\n"
                 f"• *Emergency Kill Switch:* {'🛑 ACTIVE (Muted)' if kill else '🟢 Inactive (Live)'}\n"
                 f"• *Pending Tasks:* {pending_todos}\n"
                 f"• *Pending Reminders:* {pending_reminders}\n"
                 f"• *Decision Engine:* System 1 (Zero-Token Local)"
+            )
+
+        # ─── 2B. ONLINE / OFFLINE MODE TOGGLE (ZERO TOKENS) ───────────
+        if lower in ["/offline", "offline mode", "/mode offline", "disable online mode", "go offline"]:
+            from db import set_offline_mode
+            set_offline_mode(True)
+            logger.info("[SYSTEM 1] Fast-path executed: Offline mode enabled (0 tokens)")
+            return (
+                "📴 *Offline Mode Enabled (System 1 Only)*\n\n"
+                "• *Zero Cloud Tokens:* All requests run 100% locally on your PC.\n"
+                "• *Supported:* Tasks, reminders, expenses, status, clean up, and local commands.\n"
+                "• *Cloud AI:* System 2 (Groq / Gemini) is strictly paused.\n\n"
+                "_Type */online* to re-enable Cloud AI._"
+            )
+
+        if lower in ["/online", "online mode", "/mode online", "enable online mode", "go online"]:
+            from db import set_offline_mode
+            set_offline_mode(False)
+            logger.info("[SYSTEM 1] Fast-path executed: Online mode enabled (0 tokens)")
+            return (
+                "🌐 *Online Mode Enabled (System 1 + System 2)*\n\n"
+                "• *Local Engine:* Fast commands, tasks, and reminders continue to use 0 tokens.\n"
+                "• *Cloud AI:* Complex reasoning, research, and coding will seamlessly use Cloud AI (Groq / Gemini)."
+            )
+
+        if lower in ["/mode", "mode", "current mode", "what mode"]:
+            from db import get_offline_mode
+            offline = get_offline_mode()
+            return (
+                f"⚙️ *Current ARGUS Operating Mode*\n\n"
+                f"• *Mode:* {'📴 OFFLINE (System 1 Zero-Token Only)' if offline else '🌐 ONLINE (System 1 Local + System 2 Cloud)'}\n\n"
+                f"_Switch anytime with */offline* or */online*._"
             )
 
         # ─── 3. TODO & TASK ACTIONS ──────────────────────────────────

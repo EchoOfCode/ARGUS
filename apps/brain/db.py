@@ -293,6 +293,16 @@ def set_kill_switch_status(active: bool, db_path: Optional[str] = None) -> None:
     set_system_setting("kill_switch", "1" if active else "0", db_path)
 
 
+def get_offline_mode(db_path: Optional[str] = None) -> bool:
+    """Check if offline-only mode (System 1 Zero-Token) is active."""
+    return get_system_setting("offline_mode", "0", db_path) == "1"
+
+
+def set_offline_mode(active: bool, db_path: Optional[str] = None) -> None:
+    """Set offline-only mode (True=System 1 only, False=Online System 1 + System 2)."""
+    set_system_setting("offline_mode", "1" if active else "0", db_path)
+
+
 # ─── MESSAGE INGESTION (IDEMPOTENT) ─────────────────────────────
 
 def ingest_message(
