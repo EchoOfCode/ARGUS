@@ -148,6 +148,31 @@ export async function sendTodoList(
   await sendText(sock, jid, message, config);
 }
 
+export async function sendReminderList(
+  sock: WASocket,
+  jid: string,
+  reminders: Array<{ id: number; reminder_text: string; due_at: string }>,
+  config: Config
+): Promise<void> {
+  if (reminders.length === 0) {
+    await sendText(sock, jid, "🔔 *No upcoming reminders scheduled.*", config);
+    return;
+  }
+
+  const lines = reminders.map((r) => {
+    return `• *#${r.id}* — ${r.reminder_text}\n  📅 _Due: ${formatDueAt(r.due_at)}_`;
+  });
+
+  const message = [
+    `🔔 *Upcoming Reminders (${reminders.length}):*`,
+    `────────────────────────────`,
+    lines.join("\n\n"),
+    `────────────────────────────`,
+    `_To add:_ *"remind me to [task] at [time]"* or */reminder [task] [time]*`,
+  ].join("\n");
+  await sendText(sock, jid, message, config);
+}
+
 export async function sendEmailList(
   sock: WASocket,
   jid: string,

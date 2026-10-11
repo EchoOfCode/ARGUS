@@ -43,6 +43,7 @@ import {
   sendText,
   sendTodoList,
   sendReminderSet,
+  sendReminderList,
   sendError,
   sendEventConfirmation,
   sendEventAdded,
@@ -506,6 +507,153 @@ export async function handleSelfChatMessage(
     }
   }
 
+  // ─── Deterministic Slash Commands Engine (Zero LLM Overhead) ───
+  if (text.startsWith("/")) {
+    const rawCmd = text.substring(1).trim();
+    const parts = rawCmd.split(/\s+/);
+    const cmd = parts[0]?.toLowerCase() || "";
+    const args = parts.slice(1).join(" ").trim();
+
+    switch (cmd) {
+      case "help":
+      case "start": {
+        await sendHelpMessage(sock, chatJid, config);
+        return;
+      }
+
+      case "todo":
+      case "todos":
+      case "task":
+      case "tasks": {
+        if (!args || args === "list" || args === "show") {
+          await handleListTodos(sock, chatJid, config);
+          return;
+        }
+        if (args.startsWith("add ")) {
+          const item = args.substring(4).trim();
+          if (item) {
+            const t = addTodo(chatJid, item);
+            await sendText(sock, chatJid, `📝 Added: *${t.text}* (Todo #${t.id})`, config);
+            return;
+          }
+        }
+        if (args.startsWith("done ") || args.startsWith("complete ")) {
+          const id = parseInt(args.replace(/^(done|complete)\s*#?/, "").trim(), 10);
+          if (!isNaN(id)) {
+            const success = completeTodo(id);
+            if (success) {
+              await sendText(sock, chatJid, `✅ Todo #${id} marked completed!`, config);
+            } else {
+              await sendError(sock, chatJid, `Todo #${id} not found.`, config);
+            }
+            return;
+          }
+        }
+        if (args.startsWith("delete ") || args.startsWith("remove ")) {
+          const id = parseInt(args.replace(/^(delete|remove)\s*#?/, "").trim(), 10);
+          if (!isNaN(id)) {
+            const success = deleteTodo(id);
+            if (success) {
+              await sendText(sock, chatJid, `🗑️ Todo #${id} deleted.`, config);
+            } else {
+              await sendError(sock, chatJid, `Todo #${id} not found.`, config);
+            }
+            return;
+          }
+        }
+        const t = addTodo(chatJid, args);
+        await sendText(sock, chatJid, `📝 Added: *${t.text}* (Todo #${t.id})`, config);
+        return;
+      }
+
+      case "reminder":
+      case "reminders": {
+        if (!args || args === "list" || args === "show") {
+          await handleListReminders(sock, chatJid, config);
+          return;
+        }
+        const reminderResult = await callBrain(config, "/parse-reminder", {
+          message_text: args,
+          reference_timestamp: new Date().toISOString(),
+        });
+        if (reminderResult && reminderResult.due_at) {
+          addReminder(chatJid, reminderResult.reminder_text, reminderResult.due_at);
+          await sendReminderSet(sock, chatJid, reminderResult.reminder_text, reminderResult.due_at, config);
+        } else {
+          await sendError(sock, chatJid, "Could not determine reminder time. Example: /reminder sync with Alex tomorrow at 5pm", config);
+        }
+        return;
+      }
+
+      case "autopilot": {
+        if (!args || args === "status") {
+          await handleAutopilotStatus(sock, chatJid, config);
+          return;
+        }
+        if (args.startsWith("on")) {
+          const target = args.replace(/^on\s*:?\s*/i, "").trim();
+          await handleEnableAutopilot(sock, chatJid, target, config);
+          return;
+        }
+        if (args.startsWith("off")) {
+          const target = args.replace(/^off\s*:?\s*/i, "").trim();
+          await handleDisableAutopilot(sock, chatJid, target, config);
+          return;
+        }
+        await handleAutopilotStatus(sock, chatJid, config);
+        return;
+      }
+
+      case "killswitch": {
+        if (args === "on" || args === "engage") {
+          await handleEmergencyKillSwitch(sock, chatJid, true, config);
+          return;
+        }
+        if (args === "off" || args === "disengage") {
+          await handleEmergencyKillSwitch(sock, chatJid, false, config);
+          return;
+        }
+        await handleAutopilotStatus(sock, chatJid, config);
+        return;
+      }
+
+      case "briefing":
+      case "agenda": {
+        await handleDailyBriefing(sock, chatJid, config);
+        return;
+      }
+
+      case "expenses":
+      case "spending": {
+        await handleShowExpenses(sock, chatJid, config);
+        return;
+      }
+
+      case "debts":
+      case "splits": {
+        await handleShowDebts(sock, chatJid, config);
+        return;
+      }
+
+      case "contacts": {
+        await handleListContacts(sock, chatJid, config);
+        return;
+      }
+
+      case "ask": {
+        if (args) {
+          const askRes = await callBrain(config, "/ask", { question: args, use_web_search: true });
+          if (askRes && askRes.answer) {
+            await sendText(sock, chatJid, askRes.answer, config);
+            return;
+          }
+        }
+        await sendError(sock, chatJid, "Usage: /ask [question]", config);
+        return;
+      }
+    }
+  }
+
   // ─── Help Command ───────────────────────────────────────────
   if (normalized === "help" || normalized === "/help") {
     await sendHelpMessage(sock, chatJid, config);
@@ -662,10 +810,22 @@ export async function handleSelfChatMessage(
     return;
   }
 
-  // ─── Todo Commands ──────────────────────────────────────────
-  if (["todos", "show todos", "my todos", "list", "todo"].includes(normalized)) {
-    const todos = getTodos(chatJid);
-    await sendTodoList(sock, chatJid, todos, config);
+  // ─── Todo & Reminder Natural Language Commands ─────────────
+  if (
+    /^(show\s+(me\s+)?(my\s+)?(todo|task)s?(\s+list)?|my\s+(todo|task)s?|list\s+(my\s+)?(todo|task)s?|what\s+are\s+my\s+(todo|task)s?|todos|todo|tasks|task\s+list)$/i.test(
+      normalized
+    )
+  ) {
+    await handleListTodos(sock, chatJid, config);
+    return;
+  }
+
+  if (
+    /^(show\s+(me\s+)?(my\s+)?reminders?(\s+list)?|my\s+reminders?|list\s+(my\s+)?reminders?|what\s+are\s+my\s+reminders?|reminders|upcoming\s+reminders)$/i.test(
+      normalized
+    )
+  ) {
+    await handleListReminders(sock, chatJid, config);
     return;
   }
 
@@ -945,6 +1105,11 @@ export async function handleSelfChatMessage(
       }
 
       case "todo": {
+        if (/\b(show|list|what\s+are|my\s+(todo|task)s?|view)\b/i.test(text)) {
+          await handleListTodos(sock, chatJid, config);
+          break;
+        }
+
         const data = result.extract_data;
         if (data && data.text) {
           const todo = addTodo(chatJid, data.text);
@@ -1578,6 +1743,92 @@ async function handleListContacts(sock: WASocket, chatJid: string, config: Confi
   await sendText(sock, chatJid, `📱 *Your WhatsApp Directory:*\n\n${sections.join("\n\n")}`, config);
 }
 
+async function handleListTodos(sock: WASocket, chatJid: string, config: Config): Promise<void> {
+  let todos: any[] = [];
+  try {
+    const res = await callBrain(config, `/api/todos?chat_jid=${encodeURIComponent(chatJid)}`, {}, "GET");
+    if (res && Array.isArray(res.todos)) {
+      todos = res.todos;
+    } else {
+      todos = getTodos(chatJid);
+    }
+  } catch {
+    todos = getTodos(chatJid);
+  }
+  await sendTodoList(sock, chatJid, todos, config);
+}
+
+async function handleListReminders(sock: WASocket, chatJid: string, config: Config): Promise<void> {
+  let reminders: any[] = [];
+  try {
+    const res = await callBrain(config, "/api/reminders/pending", {}, "GET");
+    if (res && Array.isArray(res.reminders)) {
+      reminders = res.reminders;
+    } else {
+      reminders = getTodayReminders(chatJid);
+    }
+  } catch {
+    reminders = getTodayReminders(chatJid);
+  }
+  await sendReminderList(sock, chatJid, reminders, config);
+}
+
+async function handleShowExpenses(sock: WASocket, chatJid: string, config: Config): Promise<void> {
+  const summary = getExpensesSummary("month");
+  if (summary.expenses.length === 0) {
+    await sendText(sock, chatJid, "💸 *No expenses recorded this month.* To log one: _'Paid 350 for lunch with Taylor'_", config);
+  } else {
+    const items = summary.expenses.slice(0, 10).map((e: ExpenseRecord) => `• ₹${e.amount} — *${e.description}* (${e.category})`).join("\n");
+    await sendText(
+      sock,
+      chatJid,
+      `💸 *Expenses Breakdown (Last 30 Days):*\n────────────────────────────\n💰 *Total Spent:* ₹${summary.total}\n\n${items}`,
+      config
+    );
+  }
+}
+
+async function handleShowDebts(sock: WASocket, chatJid: string, config: Config): Promise<void> {
+  const debts = getDebtsSummary();
+  const sections: string[] = [];
+  if (debts.owedToMe.length > 0) {
+    const owedLines = debts.owedToMe.map((d: ExpenseRecord) => `• *${d.person || "Someone"}* owes you *₹${d.amount}* (${d.description})`).join("\n");
+    sections.push(`🟢 *Money Owed To You:*\n${owedLines}`);
+  }
+  if (debts.iOwe.length > 0) {
+    const iOweLines = debts.iOwe.map((d: ExpenseRecord) => `• You owe *${d.person || "Someone"}* *₹${d.amount}* (${d.description})`).join("\n");
+    sections.push(`🔴 *Money You Owe:*\n${iOweLines}`);
+  }
+  if (sections.length === 0) {
+    await sendText(sock, chatJid, "✨ *All debts settled!* Nobody owes you money, and you have no pending debts.", config);
+  } else {
+    await sendText(sock, chatJid, `💰 *Financial Debts & Split Ledger:*\n────────────────────────────\n${sections.join("\n\n")}`, config);
+  }
+}
+
+async function handleEmergencyKillSwitch(sock: WASocket, chatJid: string, engage: boolean, config: Config): Promise<void> {
+  try {
+    await callBrain(config, "/api/killswitch", { active: engage });
+    if (engage) {
+      await sendText(
+        sock,
+        chatJid,
+        "🛑 *GLOBAL EMERGENCY KILL SWITCH ENGAGED!*\nAll autonomous auto-replies are suspended system-wide across all contacts.\n\n_To restore:_ Type */killswitch off*",
+        config
+      );
+    } else {
+      await sendText(
+        sock,
+        chatJid,
+        "🟢 *GLOBAL EMERGENCY KILL SWITCH DISENGAGED!*\nAutonomy rules have been restored across your configured contacts.",
+        config
+      );
+    }
+  } catch (err: any) {
+    await sendError(sock, chatJid, `Could not toggle kill switch: ${err?.message}`, config);
+  }
+}
+
 async function handleSaveContact(sock: WASocket, chatJid: string, raw: string, config: Config): Promise<void> {
   const clean = raw.trim();
   const match = clean.match(/^([a-zA-Z\s]+)\s+([\+\d\s\-]{8,20})$/);
@@ -1759,15 +2010,21 @@ async function handleAutopilotStatus(sock: WASocket, chatJid: string, config: Co
     return;
   }
 
-  if (rules.length === 0) {
+  // Filter to contacts with actual active autonomy (Tier 1 or Tier 2)
+  const activeRules = rules.filter((r: any) => r.tier && r.tier > 0);
+
+  if (activeRules.length === 0) {
     const msg = [
       `🤖 *ARGUS Auto-Pilot Persona is currently OFF.*`,
       ``,
+      `All contacts are currently running in default safe mode (*Tier 0: Draft Only*).`,
+      `Zero messages are being sent autonomously.`,
+      ``,
       `*How to enable:*`,
-      `• *autopilot on for [Contact]* — Auto-replies as you to that person`,
-      `  _Example:_ *autopilot on for Alex*`,
-      `• *autopilot on: [reason]* — Global busy mode for all 1-on-1 DMs`,
-      `  _Example:_ *autopilot on: studying for exams, reply casually*`,
+      `• */autopilot on [Contact]* — Auto-replies as you to that person`,
+      `  _Example:_ */autopilot on Alex*`,
+      `• */autopilot on: [reason]* — Global busy mode for all 1-on-1 DMs`,
+      `  _Example:_ */autopilot on: studying for exams, reply casually*`,
       ``,
       `_Tip:_ You can also configure contacts anytime in the Web Dashboard at http://100.92.175.117:3000/contacts`,
     ].join("\n");
@@ -1775,8 +2032,8 @@ async function handleAutopilotStatus(sock: WASocket, chatJid: string, config: Co
     return;
   }
 
-  const lines = rules.map((r: any) => {
-    const tierName = r.tier === 2 ? "Tier 2: Autonomous ⚡" : r.tier === 1 ? "Tier 1: Supervised 🛡️" : "Tier 0: Draft 📝";
+  const lines = activeRules.map((r: any) => {
+    const tierName = r.tier === 2 ? "Tier 2: Autonomous ⚡" : "Tier 1: Supervised 🛡️";
     const promptStr = r.custom_prompt ? `\n   📝 _Context:_ "${r.custom_prompt}"` : "";
     const cleanPhone = r.jid.replace("@s.whatsapp.net", "");
     return `👤 *${r.name}* (+${cleanPhone})\n   🎯 _${tierName}_\n   ⚡ _Replies Sent:_ ${r.auto_reply_count || 0}${promptStr}`;
@@ -1856,49 +2113,36 @@ async function handleDisableAutopilot(sock: WASocket, chatJid: string, raw: stri
 
 async function sendHelpMessage(sock: WASocket, jid: string, config: Config): Promise<void> {
   const help = [
-    `🤖 *ARGUS Executive Assistant — Capabilities:*`,
+    `⚡ *ARGUS AI Executive Assistant — Command Center*`,
     ``,
-    `🤖 *Auto-Pilot Digital Clone Persona:*`,
-    `• "autopilot on for [Person]" — Auto-replies to their incoming DMs as you`,
-    `• "autopilot on: [busy reason]" — Global busy auto-responder`,
-    `• "autopilot off" — Stops auto-pilot`,
-    `• "autopilot status" — View active auto-pilot rules`,
+    `📌 *Instant Slash Commands (Deterministic & Fast):*`,
+    `• */todos* or */todo list* — View all pending todo tasks`,
+    `• */todo add [task]* — Add a new task (e.g. */todo buy milk*)`,
+    `• */todo done [id]* — Mark task completed (e.g. */todo done 1*)`,
+    `• */todo delete [id]* — Remove task (e.g. */todo delete 1*)`,
+    `• */reminders* — View all scheduled reminders & due times`,
+    `• */reminder [text] [time]* — Set reminder (e.g. */reminder call Mom 5pm*)`,
+    `• */autopilot* — View active autonomy contacts & kill switch state`,
+    `• */autopilot on [Person]* — Enable autonomous persona for contact`,
+    `• */autopilot off [Person]* — Disable persona for contact`,
+    `• */killswitch on* — 🛑 Emergency halt for ALL auto-replies system-wide`,
+    `• */killswitch off* — 🟢 Restore auto-replies across active contacts`,
+    `• */briefing* or */agenda* — Morning briefing & today's schedule`,
+    `• */expenses* — Monthly financial breakdown`,
+    `• */debts* — Split ledger & who owes you money`,
+    `• */contacts* — Synced WhatsApp directory`,
+    `• */ask [query]* — Query AI Brain with live web search & memory`,
     ``,
-    `📅 *Google Calendar Sync:*`,
-    `• "schedule [event] tomorrow at 3pm" — Adds event & gives 1-tap Google Calendar link`,
-    `• "events" / "calendar" — View upcoming schedule with Google Calendar links`,
-    `• "cancel event #1" — Removes event from calendar`,
-    ``,
-    `📤 *Send & Draft Messages to Any Chat/Group:*`,
-    `• "tell [group / contact] [message]" — Prepares & sends message with confirmation`,
-    `• "can u send message to [name] about [topic]" — AI drafts & prepares send`,
-    `• "save contact [name] [phone]" — Saves person to your directory`,
-    `• "contacts" — View all your synced groups and contacts`,
-    ``,
-    `🧠 *Second Brain Knowledge Base:*`,
-    `• "remember [fact]" — Auto-categorizes & tags personal notes`,
-    `• "what is my [item]?" / "who is [person]?" — Direct synthesized answers`,
-    `• "memories" — Categorized Second Brain dashboard`,
-    `• "forget #[id]" — Delete outdated note`,
-    ``,
-    `💬 *All-Chats & Group Catch-up:*`,
-    `• "summarize group" / "catchup" — Summarizes your most active group`,
-    `• "catchup [Group / Person Name]" — 3-tier structured executive summary`,
-    ``,
-    `📬 *Direct Emails (IMAP):*`,
-    `• "read my emails" / "emails" — View unread inbox`,
-    `• "summarize email #1" — Deep executive email breakdown`,
-    `• "search email invoice" — Search inbox`,
-    ``,
-    `🌅 *Executive Briefing:*`,
-    `• "briefing" / "agenda" — Instant daily overview`,
-    ``,
-    `🎙️ *Voice Notes:*`,
-    `• Send voice notes to this chat for instant Whisper execution!`,
-    ``,
-    `📝 *Todos & Reminders:*`,
-    `• "todos" / "add buy groceries" / "done #1"`,
-    `• "remind me to call Mom in 20 minutes"`,
+    `💬 *Natural Language (Ask Anything Naturally):*`,
+    `• *"show me my todo list"* or *"what are my pending tasks?"*`,
+    `• *"remind me to submit report tomorrow at 10am"*`,
+    `• *"paid 450 for lunch with Alex"*`,
+    `• *"Alex owes me 200 for taxi"*`,
+    `• *"schedule project sync tomorrow at 3pm"*`,
+    `• *"tell [name] [message]"* or *"frame message to [name]"*`,
+    `• *"remember [fact]"* (e.g. *"remember Alex is my project partner"* )`,
+    `• *"what did they say in [group name]?"* / *"summarize [chat]"*`,
+    `• *"read my emails"*`,
   ].join("\n");
 
   await sendText(sock, jid, help, config);

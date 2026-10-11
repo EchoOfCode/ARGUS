@@ -150,6 +150,22 @@ async def get_due_reminders_endpoint(
         return {"reminders": reminders}
 
 
+@bridge_router.get("/reminders/pending")
+async def get_pending_reminders_endpoint(
+    request: Request,
+    x_argus_signature: Optional[str] = Header(None),
+    x_argus_timestamp: Optional[str] = Header(None),
+    x_argus_secret: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Fetch all pending upcoming reminders."""
+    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM reminders WHERE status = 'pending' ORDER BY due_at ASC")
+        reminders = [dict(r) for r in cursor.fetchall()]
+        return {"reminders": reminders}
+
+
 @bridge_router.post("/reminders/{reminder_id}/ack")
 async def ack_reminder_endpoint(
     reminder_id: int,
@@ -336,6 +352,22 @@ async def increment_autopilot_count_endpoint(
             (jid,),
         )
         return {"success": True}
+
+
+@bridge_router.post("/killswitch")
+async def toggle_killswitch_endpoint(
+    payload: Dict[str, Any],
+    request: Request,
+    x_argus_signature: Optional[str] = Header(None),
+    x_argus_timestamp: Optional[str] = Header(None),
+    x_argus_secret: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Engage or disengage global emergency kill switch."""
+    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    active = bool(payload.get("active", False))
+    from db import set_kill_switch_status
+    set_kill_switch_status(active)
+    return {"success": True, "kill_switch_active": active}
 
 
 # ─── TODOS ──────────────────────────────────────────────────────
