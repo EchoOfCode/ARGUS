@@ -101,11 +101,11 @@ def test_tool_classifications():
 def test_new_crud_and_operational_tools():
     """Verify complete, delete, cancel, reschedule, and kill switch tools work properly."""
     from agent_core import (
-        tool_create_todo,
-        tool_complete_todo,
-        tool_delete_todo,
-        tool_create_reminder,
         tool_cancel_reminder,
+        tool_complete_todo,
+        tool_create_reminder,
+        tool_create_todo,
+        tool_delete_todo,
         tool_reschedule_reminder,
         tool_set_kill_switch,
     )
@@ -122,6 +122,7 @@ def test_new_crud_and_operational_tools():
 
     # 2. Match text delete
     t2 = tool_create_todo("Clean workstation desk")
+    assert t2["success"] is True
     del_res = tool_delete_todo(match_text="workstation")
     assert del_res["success"] is True
 

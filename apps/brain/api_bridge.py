@@ -147,10 +147,16 @@ async def get_todos_endpoint(
     await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
     with get_db() as conn:
         cursor = conn.cursor()
-        if include_completed:
-            cursor.execute("SELECT * FROM todos ORDER BY id DESC")
+        if chat_jid:
+            if include_completed:
+                cursor.execute("SELECT * FROM todos WHERE chat_jid = ? ORDER BY id DESC", (chat_jid,))
+            else:
+                cursor.execute("SELECT * FROM todos WHERE chat_jid = ? AND completed = 0 ORDER BY id DESC", (chat_jid,))
         else:
-            cursor.execute("SELECT * FROM todos WHERE completed = 0 ORDER BY id DESC")
+            if include_completed:
+                cursor.execute("SELECT * FROM todos ORDER BY id DESC")
+            else:
+                cursor.execute("SELECT * FROM todos WHERE completed = 0 ORDER BY id DESC")
         todos = [dict(r) for r in cursor.fetchall()]
         return {"todos": todos}
 
@@ -409,42 +415,6 @@ async def toggle_killswitch_endpoint(
     return {"success": True, "kill_switch_active": active}
 
 
-# ─── TODOS ──────────────────────────────────────────────────────
-
-@bridge_router.get("/todos")
-async def get_todos_endpoint(
-    chat_jid: str,
-    request: Request,
-    include_completed: bool = False,
-    x_argus_signature: Optional[str] = Header(None),
-    x_argus_timestamp: Optional[str] = Header(None),
-    x_argus_secret: Optional[str] = Header(None),
-) -> Dict[str, Any]:
-    """Fetch todos for a given chat."""
-    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
-    with get_db() as conn:
-        cursor = conn.cursor()
-        if include_completed:
-            cursor.execute("SELECT * FROM todos WHERE chat_jid = ? ORDER BY created_at DESC", (chat_jid,))
-        else:
-            cursor.execute("SELECT * FROM todos WHERE chat_jid = ? AND completed = 0 ORDER BY created_at DESC", (chat_jid,))
-        return {"todos": [dict(r) for r in cursor.fetchall()]}
-
-
-@bridge_router.post("/todos")
-async def add_todo_endpoint(
-    data: TodoCreateRequest,
-    request: Request,
-    x_argus_signature: Optional[str] = Header(None),
-    x_argus_timestamp: Optional[str] = Header(None),
-    x_argus_secret: Optional[str] = Header(None),
-) -> Dict[str, Any]:
-    """Create a new todo item."""
-    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO todos (chat_jid, text) VALUES (?, ?)", (data.chat_jid, data.text.strip()))
-        return {"success": True, "id": cursor.lastrowid}
 
 
 @bridge_router.post("/todos/{todo_id}/complete")
