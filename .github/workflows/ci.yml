@@ -64,10 +64,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Lint with Ruff
-        run: ruff check .
+        run: python -m ruff check .
 
       - name: Run characterization tests
-        run: pytest tests/ -v
+        run: python -m pytest tests/ -v
 
   bridge-checks:
     name: Bridge (Node) Typecheck & Tests
@@ -105,10 +105,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: "npm"
           cache-dependency-path: apps/web/package-lock.json
 
@@ -148,7 +148,7 @@ jobs:
       - name: Build Brain Docker Image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./apps/brain
           file: ./apps/brain/Dockerfile
           push: false
           tags: argus-brain:test
@@ -156,7 +156,7 @@ jobs:
       - name: Build Bridge Docker Image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./apps/bridge
           file: ./apps/bridge/Dockerfile
           push: false
           tags: argus-bridge:test
