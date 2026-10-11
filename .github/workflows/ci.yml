@@ -67,7 +67,14 @@ jobs:
         run: python -m ruff check .
 
       - name: Run characterization tests
-        run: python -m pytest tests/ -v
+        run: |
+          python -m pytest tests/ -v 2>&1 | tee pytest.log || {
+            echo "### Pytest Failure Details" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            cat pytest.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
         env:
           ARGUS_TEST_MODE: "1"
           ARGUS_SECRET: "test_mock_secret_for_pytest_environment_32chars!"
