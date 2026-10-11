@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -64,6 +65,22 @@ class ApprovalActionRequest(BaseModel):
 class ContactTierUpdateRequest(BaseModel):
     tier: int = Field(..., ge=0, le=2)
     status: Optional[str] = Field("active", pattern="^(active|disabled)$")
+
+
+class ContactCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    phone: str = Field(..., min_length=3)
+    tier: Optional[int] = Field(0, ge=0, le=2)
+
+
+class ContactImportItem(BaseModel):
+    name: str = Field(..., min_length=1)
+    phone: str = Field(..., min_length=3)
+    tier: Optional[int] = Field(0, ge=0, le=2)
+
+
+class ContactBatchImportRequest(BaseModel):
+    contacts: List[ContactImportItem]
 
 
 class KillSwitchRequest(BaseModel):
@@ -288,6 +305,118 @@ async def update_contact_tier(jid: str, payload: ContactTierUpdateRequest) -> Di
             (jid, contact_name, payload.status or "active", payload.tier),
         )
         return {"jid": jid, "tier": payload.tier, "status": payload.status}
+
+
+def normalize_whatsapp_jid(phone_or_jid: str) -> str:
+    cleaned = phone_or_jid.strip().lower()
+    if cleaned.endswith("@s.whatsapp.net") or cleaned.endswith("@g.us"):
+        return cleaned
+    digits = re.sub(r"[^0-9]", "", cleaned)
+    if len(digits) == 10:
+        digits = f"91{digits}"
+    return f"{digits}@s.whatsapp.net"
+
+
+@ui_router.post("/contacts", dependencies=[Depends(require_ui_owner_auth)])
+async def create_contact(payload: ContactCreateRequest) -> Dict[str, Any]:
+    """Manually add or update a contact in the WhatsApp directory."""
+    jid = normalize_whatsapp_jid(payload.phone)
+    name = payload.name.strip()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO chat_directory (jid, name, is_group, last_message_at)
+            VALUES (?, ?, 0, datetime('now'))
+            ON CONFLICT(jid) DO UPDATE SET name = excluded.name
+            """,
+            (jid, name),
+        )
+        cursor.execute(
+            """
+            INSERT INTO autopilot_rules (jid, name, status, tier, created_at)
+            VALUES (?, ?, 'active', ?, datetime('now'))
+            ON CONFLICT(jid) DO UPDATE SET name = excluded.name, tier = excluded.tier
+            """,
+            (jid, name, payload.tier or 0),
+        )
+        return {"success": True, "jid": jid, "name": name, "tier": payload.tier or 0}
+
+
+@ui_router.post("/contacts/import", dependencies=[Depends(require_ui_owner_auth)])
+async def import_contacts(payload: ContactBatchImportRequest) -> Dict[str, Any]:
+    """Batch import contacts (from vCard .vcf or CSV spreadsheet)."""
+    imported_count = 0
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for item in payload.contacts:
+            name = item.name.strip()
+            if not name:
+                continue
+            jid = normalize_whatsapp_jid(item.phone)
+            digits = re.sub(r"[^0-9]", "", jid.split("@")[0])
+            if len(digits) >= 7:
+                cursor.execute(
+                    """
+                    INSERT INTO chat_directory (jid, name, is_group, last_message_at)
+                    VALUES (?, ?, 0, datetime('now'))
+                    ON CONFLICT(jid) DO UPDATE SET name = excluded.name
+                    """,
+                    (jid, name),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO autopilot_rules (jid, name, status, tier, created_at)
+                    VALUES (?, ?, 'active', ?, datetime('now'))
+                    ON CONFLICT(jid) DO UPDATE SET name = excluded.name
+                    """,
+                    (jid, name, item.tier or 0),
+                )
+                imported_count += 1
+    return {"success": True, "imported_count": imported_count}
+
+
+@ui_router.post("/contacts/scan-history", dependencies=[Depends(require_ui_owner_auth)])
+async def scan_history_for_contacts() -> Dict[str, Any]:
+    """Scan message logs to automatically discover past contacts and sync to directory."""
+    discovered = 0
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT DISTINCT sender_jid as jid, sender_name as name 
+            FROM message_log 
+            WHERE sender_jid LIKE '%@s.whatsapp.net' AND sender_jid != 'owner' AND sender_jid != ''
+            UNION
+            SELECT DISTINCT chat_jid as jid, chat_name as name 
+            FROM message_log 
+            WHERE chat_jid LIKE '%@s.whatsapp.net' AND chat_jid != ''
+            """
+        )
+        rows = cursor.fetchall()
+        for r in rows:
+            jid = r["jid"]
+            name = r["name"] or jid.split("@")[0]
+            cursor.execute(
+                """
+                INSERT INTO chat_directory (jid, name, is_group, last_message_at)
+                VALUES (?, ?, 0, datetime('now'))
+                ON CONFLICT(jid) DO UPDATE SET name = COALESCE(NULLIF(chat_directory.name, ''), excluded.name)
+                """,
+                (jid, name),
+            )
+            discovered += 1
+    return {"success": True, "discovered_count": discovered}
+
+
+@ui_router.delete("/contacts/{jid}", dependencies=[Depends(require_ui_owner_auth)])
+async def delete_contact(jid: str) -> Dict[str, Any]:
+    """Delete a contact from chat directory and autopilot rules."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM chat_directory WHERE jid = ?", (jid,))
+        cursor.execute("DELETE FROM autopilot_rules WHERE jid = ?", (jid,))
+        return {"success": True, "deleted": jid}
 
 
 @ui_router.get("/killswitch", dependencies=[Depends(require_ui_owner_auth)])

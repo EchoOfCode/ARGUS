@@ -201,6 +201,49 @@ async function connectToWhatsApp(): Promise<void> {
   });
 
   // ─── Contact Address Book Synchronization via Brain API ───────
+  sock.ev.on("messaging-history.set", async ({ chats, contacts }: any) => {
+    const contactList: Array<{ jid: string; name: string; is_group: boolean }> = [];
+    if (contacts && Array.isArray(contacts)) {
+      for (const c of contacts) {
+        if (c.id && (c.name || c.notify || c.verifiedName)) {
+          contactList.push({
+            jid: c.id,
+            name: c.name || c.notify || c.verifiedName,
+            is_group: c.id.endsWith("@g.us"),
+          });
+        }
+      }
+    }
+    if (chats && Array.isArray(chats)) {
+      for (const ch of chats) {
+        if (ch.id && (ch.name || ch.subject)) {
+          contactList.push({
+            jid: ch.id,
+            name: ch.name || ch.subject || ch.id.split("@")[0],
+            is_group: ch.id.endsWith("@g.us"),
+          });
+        }
+      }
+    }
+    if (contactList.length > 0) {
+      logger.info({ count: contactList.length }, "Synced messaging history contacts/chats into Brain directory");
+      callBrain(config, "/api/contacts/sync", { contacts: contactList }).catch(() => {});
+    }
+  });
+
+  sock.ev.on("chats.upsert", async (chats: any[]) => {
+    const contactList = chats
+      .filter((c) => c.id && (c.name || c.subject))
+      .map((c) => ({
+        jid: c.id,
+        name: c.name || c.subject,
+        is_group: c.id.endsWith("@g.us"),
+      }));
+    if (contactList.length > 0) {
+      callBrain(config, "/api/contacts/sync", { contacts: contactList }).catch(() => {});
+    }
+  });
+
   sock.ev.on("contacts.upsert", async (contacts: any[]) => {
     const contactList = contacts
       .filter((c) => c.id && (c.name || c.notify || c.verifiedName))

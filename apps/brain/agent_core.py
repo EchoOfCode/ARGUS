@@ -9,6 +9,7 @@ Provides complete agentic superpowers:
 
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +23,7 @@ logger = logging.getLogger("argus.agent")
 
 TOOL_CLASSIFICATIONS: Dict[str, str] = {
     "list_contacts": "read",
+    "save_contact": "write",
     "search_chat_history": "read",
     "search_links_and_files": "read",
     "get_agenda": "read",
@@ -62,6 +64,43 @@ def tool_list_contacts(prefix: Optional[str] = None, search: Optional[str] = Non
                 (limit,),
             )
         return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def tool_save_contact(name: str, phone: str, tier: int = 0) -> Dict[str, Any]:
+    """Save or update a contact in the WhatsApp directory database."""
+    digits = re.sub(r"[^0-9]", "", phone)
+    if len(digits) == 10:
+        digits = f"91{digits}"
+    jid = f"{digits}@s.whatsapp.net" if not phone.endswith("@s.whatsapp.net") else phone
+
+    conn = get_bridge_db()
+    if not conn:
+        return {"error": "Database unavailable"}
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO chat_directory (jid, name, is_group, last_message_at)
+            VALUES (?, ?, 0, datetime('now'))
+            ON CONFLICT(jid) DO UPDATE SET name = excluded.name
+            """,
+            (jid, name.strip()),
+        )
+        cursor.execute(
+            """
+            INSERT INTO autopilot_rules (jid, name, status, tier, created_at)
+            VALUES (?, ?, 'active', ?, datetime('now'))
+            ON CONFLICT(jid) DO UPDATE SET name = excluded.name, tier = excluded.tier
+            """,
+            (jid, name.strip(), tier),
+        )
+        conn.commit()
+        return {
+            "success": True,
+            "message": f"Successfully saved contact {name} ({jid}) with Autonomy Tier {tier}."
+        }
     finally:
         conn.close()
 
@@ -359,6 +398,22 @@ AGENT_TOOLS = [
                     "prefix": {"type": "string", "description": "Starting letter, e.g. 'b' or 'm'"},
                     "search": {"type": "string", "description": "Name search substring, e.g. 'alex'"},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_contact",
+            "description": "Save or add a new person or contact to the WhatsApp directory so they can be messaged, referenced, or assigned an autonomy tier.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Full name or nickname of contact"},
+                    "phone": {"type": "string", "description": "Phone number or WhatsApp JID"},
+                    "tier": {"type": "integer", "description": "Autonomy tier 0 (Draft Only), 1 (Supervised), or 2 (Autonomous). Default 0."}
+                },
+                "required": ["name", "phone"]
             },
         },
     },
@@ -665,6 +720,12 @@ Current Reference Time: {now_iso}
 
                 if fn_name == "list_contacts":
                     tool_output = tool_list_contacts(prefix=fn_args.get("prefix"), search=fn_args.get("search"))
+                elif fn_name == "save_contact":
+                    tool_output = tool_save_contact(
+                        name=fn_args.get("name", ""),
+                        phone=str(fn_args.get("phone", "")),
+                        tier=int(fn_args.get("tier", 0)),
+                    )
                 elif fn_name == "search_chat_history":
                     tool_output = tool_search_chat_history(query=fn_args.get("query"), chat_name=fn_args.get("chat_name"))
                 elif fn_name == "search_links_and_files":
