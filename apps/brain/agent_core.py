@@ -623,7 +623,23 @@ Current Reference Time: {now_iso}
             if not tool_calls:
                 return response_message.content or "How can I assist you, boss?"
 
-            messages.append(response_message)
+            assistant_dict: Dict[str, Any] = {
+                "role": "assistant",
+                "content": getattr(response_message, "content", "") or "",
+            }
+            if tool_calls:
+                assistant_dict["tool_calls"] = [
+                    {
+                        "id": getattr(tc, "id", f"call_{i}"),
+                        "type": "function",
+                        "function": {
+                            "name": getattr(tc.function, "name", ""),
+                            "arguments": getattr(tc.function, "arguments", "{}"),
+                        },
+                    }
+                    for i, tc in enumerate(tool_calls)
+                ]
+            messages.append(assistant_dict)
 
             for tc in tool_calls:
                 fn_name = tc.function.name

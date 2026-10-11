@@ -81,8 +81,10 @@ class MockLLMProvider(BaseLLMProvider):
         logger.info(f"MockLLM completion called with {len(messages)} messages (log redacted)")
         user_msg = ""
         for m in reversed(messages):
-            if m.get("role") == "user":
-                user_msg = str(m.get("content", ""))
+            role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+            if role == "user":
+                content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
+                user_msg = str(content)
                 break
 
         # Check for JSON request format
@@ -269,8 +271,9 @@ def classify_route_target(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
     """
     user_text = ""
     for m in reversed(messages):
-        if m.get("role") == "user":
-            content = m.get("content", "")
+        role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+        if role == "user":
+            content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
             if isinstance(content, str):
                 user_text = content
             elif isinstance(content, list):
