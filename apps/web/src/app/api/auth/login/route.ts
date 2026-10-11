@@ -60,11 +60,15 @@ export async function POST(request: NextRequest) {
     message: "Authenticated successfully",
   });
 
+  const isHttps =
+    request.headers.get("x-forwarded-proto") === "https" ||
+    request.nextUrl.protocol === "https:";
+
   response.cookies.set({
     name: SESSION_COOKIE_NAME,
     value: sessionToken,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isHttps,
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
