@@ -47,7 +47,9 @@ Before running ARGUS, understand the actual architecture and trade-offs:
 
 ## 🏛️ Architecture
 
-For the complete technical specification, data schemas, and design decisions, see [**`d```
+For the complete technical specification, data schemas, and design decisions, see [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md).
+
+```text
                      ┌─────────────────────────────────────────┐
                      │          WhatsApp User Interface        │
                      │   (Self-Chat / Dedicated ARGUS Group)   │
