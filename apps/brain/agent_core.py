@@ -28,6 +28,7 @@ TOOL_CLASSIFICATIONS: Dict[str, str] = {
     "search_links_and_files": "read",
     "get_agenda": "read",
     "get_todos_and_reminders": "read",
+    "get_autopilot_status": "read",
     "get_financial_summary": "read",
     "web_search": "read",
     "schedule_event": "write",
@@ -36,7 +37,6 @@ TOOL_CLASSIFICATIONS: Dict[str, str] = {
     "record_expense": "write",
     "manage_memory": "write",
     "draft_whatsapp_message": "send",
-    "get_autopilot_status": "read",
 }
 
 
@@ -716,23 +716,8 @@ Current Reference Time: {now_iso}
             if not tool_calls:
                 return response_message.content or "How can I assist you, boss?"
 
-            assistant_dict: Dict[str, Any] = {
-                "role": "assistant",
-                "content": getattr(response_message, "content", "") or "",
-            }
-            if tool_calls:
-                assistant_dict["tool_calls"] = [
-                    {
-                        "id": getattr(tc, "id", f"call_{i}"),
-                        "type": "function",
-                        "function": {
-                            "name": getattr(tc.function, "name", ""),
-                            "arguments": getattr(tc.function, "arguments", "{}"),
-                        },
-                    }
-                    for i, tc in enumerate(tool_calls)
-                ]
-            messages.append(assistant_dict)
+            # Preserve the complete message object so thought_signature and extra provider metadata remain intact
+            messages.append(response_message)
 
             for tc in tool_calls:
                 fn_name = tc.function.name

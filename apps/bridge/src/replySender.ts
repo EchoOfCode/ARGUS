@@ -123,7 +123,8 @@ export async function sendReminderSet(
   dueAt: string,
   config: Config
 ): Promise<void> {
-  const message = `⏰ *Reminder set:* ${reminderText}\n📅 Due: ${dueAt}`;
+  const formatted = formatDueAt(dueAt);
+  const message = `⏰ *Reminder set:* ${reminderText}\n📅 Due: ${formatted}`;
   await sendText(sock, jid, message, config);
 }
 
@@ -256,4 +257,28 @@ function formatTime(timeStr: string): string {
   } catch {
     return timeStr;
   }
+}
+
+function formatDueAt(dueAtStr: string): string {
+  try {
+    const d = new Date(dueAtStr);
+    if (!isNaN(d.getTime())) {
+      return (
+        d.toLocaleDateString("en-IN", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        }) +
+        " at " +
+        d.toLocaleTimeString("en-IN", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })
+      );
+    }
+  } catch {
+    // fallback
+  }
+  return dueAtStr;
 }

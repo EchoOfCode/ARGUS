@@ -18,6 +18,7 @@ from config import get_settings
 from db import (
     get_db,
     get_financial_summary,
+    get_kill_switch_status,
     ingest_message,
     record_bill_split,
     record_expense,
@@ -209,6 +210,132 @@ async def sync_contacts_endpoint(
             )
             synced_count += 1
         return {"success": True, "count": synced_count}
+
+
+# ─── AUTOPILOT RULES ───────────────────────────────────────
+
+@bridge_router.get("/autopilot/rules")
+async def get_autopilot_rules_endpoint(
+    request: Request,
+    x_argus_signature: Optional[str] = Header(None),
+    x_argus_timestamp: Optional[str] = Header(None),
+    x_argus_secret: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Fetch all active autopilot rules and global kill switch status for the bridge."""
+    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    ks_active = get_kill_switch_status()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ar.jid, COALESCE(NULLIF(ar.name, ''), cd.name, ar.jid) as name, 
+                   ar.status, ar.tier, ar.custom_prompt, ar.auto_reply_count, 
+                   ar.created_at, ar.last_replied_at
+            FROM autopilot_rules ar
+            LEFT JOIN chat_directory cd ON ar.jid = cd.jid
+            WHERE ar.status = 'active'
+            ORDER BY ar.tier DESC, ar.created_at DESC
+            """
+        )
+        rules = [dict(r) for r in cursor.fetchall()]
+        return {
+            "kill_switch_active": ks_active,
+            "count": len(rules),
+            "rules": rules,
+        }
+
+
+@bridge_router.get("/autopilot/check")
+async def check_autopilot_endpoint(
+    jid: str,
+    request: Request,
+    x_argus_signature: Optional[str] = Header(None),
+    x_argus_timestamp: Optional[str] = Header(None),
+    x_argus_secret: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Check if a specific contact JID has active autopilot enabled."""
+    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    if get_kill_switch_status():
+        return {"enabled": False, "reason": "kill_switch_active"}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ar.jid, COALESCE(NULLIF(ar.name, ''), cd.name, ar.jid) as name, 
+                   ar.status, ar.tier, ar.custom_prompt, ar.auto_reply_count,
+                   ar.created_at, ar.last_replied_at
+            FROM autopilot_rules ar
+            LEFT JOIN chat_directory cd ON ar.jid = cd.jid
+            WHERE ar.jid = ? AND ar.status = 'active'
+            """,
+            (jid,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"enabled": False, "reason": "no_rule"}
+        return {"enabled": True, "rule": dict(row)}
+
+
+@bridge_router.post("/autopilot/toggle")
+async def toggle_autopilot_endpoint(
+    payload: Dict[str, Any],
+    request: Request,
+    x_argus_signature: Optional[str] = Header(None),
+    x_argus_timestamp: Optional[str] = Header(None),
+    x_argus_secret: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Toggle or configure an autopilot rule from WhatsApp chat command."""
+    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    jid = payload.get("jid")
+    if not jid:
+        raise HTTPException(status_code=400, detail="Missing required field: jid")
+
+    status = payload.get("status", "active")
+    tier = int(payload.get("tier", 1))
+    name = (payload.get("name") or "").strip()
+    prompt = payload.get("custom_prompt")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO autopilot_rules (jid, name, status, tier, custom_prompt, created_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(jid) DO UPDATE SET
+                status = excluded.status,
+                tier = excluded.tier,
+                custom_prompt = COALESCE(excluded.custom_prompt, autopilot_rules.custom_prompt)
+            """,
+            (jid, name or jid, status, tier, prompt),
+        )
+        return {"success": True, "jid": jid, "status": status, "tier": tier}
+
+
+@bridge_router.post("/autopilot/increment")
+async def increment_autopilot_count_endpoint(
+    payload: Dict[str, Any],
+    request: Request,
+    x_argus_signature: Optional[str] = Header(None),
+    x_argus_timestamp: Optional[str] = Header(None),
+    x_argus_secret: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Increment the auto-reply count and update last_replied_at timestamp."""
+    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    jid = payload.get("jid")
+    if not jid:
+        return {"success": False}
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE autopilot_rules 
+            SET auto_reply_count = auto_reply_count + 1, last_replied_at = datetime('now')
+            WHERE jid = ?
+            """,
+            (jid,),
+        )
+        return {"success": True}
 
 
 # ─── TODOS ──────────────────────────────────────────────────────

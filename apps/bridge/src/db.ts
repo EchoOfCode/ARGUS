@@ -461,6 +461,7 @@ export interface AutopilotRule {
   jid: string;
   name: string;
   status: string;
+  tier?: number;
   custom_prompt: string | null;
   auto_reply_count: number;
   created_at: string;
@@ -469,11 +470,39 @@ export interface AutopilotRule {
 
 const memoryAutopilotRules = new Map<string, AutopilotRule>();
 
+export async function syncAutopilotRulesFromBrain(config: any): Promise<number> {
+  try {
+    const { callBrain } = await import("./brainClient.js");
+    const res = await callBrain(config, "/api/autopilot/rules", {}, "GET");
+    if (res && Array.isArray(res.rules)) {
+      memoryAutopilotRules.clear();
+      for (const r of res.rules) {
+        memoryAutopilotRules.set(r.jid, {
+          jid: r.jid,
+          name: r.name,
+          status: r.status,
+          tier: r.tier,
+          custom_prompt: r.custom_prompt || null,
+          auto_reply_count: r.auto_reply_count || 0,
+          created_at: r.created_at,
+          last_replied_at: r.last_replied_at,
+        });
+      }
+      logger.info({ count: res.rules.length }, "Synced active autopilot rules from Brain database");
+      return res.rules.length;
+    }
+  } catch (err: any) {
+    logger.warn({ err: err?.message }, "Could not sync autopilot rules from Brain");
+  }
+  return memoryAutopilotRules.size;
+}
+
 export function enableAutopilot(jid: string, name: string, customPrompt?: string): void {
   memoryAutopilotRules.set(jid, {
     jid,
     name,
     status: "active",
+    tier: 2,
     custom_prompt: customPrompt || null,
     auto_reply_count: 0,
     created_at: new Date().toISOString(),
@@ -511,11 +540,16 @@ export function listAutopilotRules(): AutopilotRule[] {
   return Array.from(memoryAutopilotRules.values());
 }
 
-export function incrementAutopilotCount(jid: string): void {
+export function incrementAutopilotCount(jid: string, config?: any): void {
   const r = memoryAutopilotRules.get(jid) || memoryAutopilotRules.get("GLOBAL");
   if (r) {
     r.auto_reply_count++;
     r.last_replied_at = new Date().toISOString();
+  }
+  if (config) {
+    import("./brainClient.js").then(({ callBrain }) => {
+      callBrain(config, "/api/autopilot/increment", { jid }).catch(() => {});
+    });
   }
 }
 

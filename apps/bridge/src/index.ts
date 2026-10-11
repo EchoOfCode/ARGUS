@@ -48,6 +48,7 @@ import { deriveOwnerIdentity } from "./authority.js";
 import { callBrain } from "./brainClient.js";
 import { handleMessage } from "./messageHandler.js";
 import { startReminderWorker } from "./reminderWorker.js";
+import { syncAutopilotRulesFromBrain } from "./db.js";
 
 const logger = pino({ level: "info", name: "argus:bridge" });
 
@@ -193,6 +194,13 @@ async function connectToWhatsApp(): Promise<void> {
         }
       } catch (err) {
         logger.warn({ err }, "Could not auto-fetch group directory");
+      }
+
+      // Sync active autopilot rules from Brain central database (ADR 0001)
+      try {
+        await syncAutopilotRulesFromBrain(config);
+      } catch (err) {
+        logger.warn({ err }, "Could not initial-sync autopilot rules from Brain");
       }
 
       // Start the reminder cron worker

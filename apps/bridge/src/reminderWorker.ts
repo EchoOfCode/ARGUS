@@ -5,6 +5,7 @@ import { Config } from "./config.js";
 import { callBrain } from "./brainClient.js";
 import { sendReminder } from "./replySender.js";
 import { handleDailyBriefing } from "./selfChat.js";
+import { syncAutopilotRulesFromBrain } from "./db.js";
 
 const logger = pino({ name: "argus:worker" });
 
@@ -58,7 +59,14 @@ export function startReminderWorker(sock: WASocket, config: Config): void {
       logger.error({ err }, "Reminder worker error");
     }
 
-    // ─── 2. Daily Executive Briefing ───────────────────────────
+    // ─── 2. Background Autopilot Rules Sync ────────────────────
+    try {
+      await syncAutopilotRulesFromBrain(config);
+    } catch {
+      // background sync warning already handled inside db.ts
+    }
+
+    // ─── 3. Daily Executive Briefing ───────────────────────────
     if (config.enableDailyBriefing) {
       if (
         now.getHours() === config.briefingHour &&

@@ -878,6 +878,24 @@ export async function handleSelfChatMessage(
 
     switch (result.intent) {
       case "reminder": {
+        const isFollowup = /^(set\s+reminders?\s+for\s+all|remind\s+(me\s+)?for\s+all|all\s+of\s+them|do\s+all|set\s+all|for\s+all)\b/i.test(text.trim());
+        if (isFollowup) {
+          const recentHistory = getRecentMessages(chatJid, 8).map((m) => ({
+            text: m.message_text,
+            is_from_me: m.is_from_me === 1,
+            timestamp: m.timestamp,
+          }));
+          const askResult = await callBrain(config, "/ask", {
+            question: text,
+            use_web_search: false,
+            recent_history: recentHistory,
+          });
+          if (askResult && askResult.answer) {
+            await sendText(sock, chatJid, askResult.answer, config);
+          }
+          break;
+        }
+
         const reminderResult = await callBrain(config, "/parse-reminder", {
           message_text: text,
           reference_timestamp: new Date().toISOString(),
@@ -1694,7 +1712,30 @@ async function handleScheduleEvent(sock: WASocket, chatJid: string, raw: string,
 }
 
 async function handleAutopilotStatus(sock: WASocket, chatJid: string, config: Config): Promise<void> {
-  const rules = listAutopilotRules();
+  // Query live rules and killswitch status from Brain central database (ADR 0001)
+  let rules: any[] = [];
+  let killSwitchActive = false;
+  try {
+    const res = await callBrain(config, "/api/autopilot/rules", {}, "GET");
+    if (res) {
+      rules = res.rules || [];
+      killSwitchActive = Boolean(res.kill_switch_active);
+    }
+  } catch (err) {
+    logger.warn({ err }, "Could not fetch autopilot rules from brain, falling back to local state");
+    rules = listAutopilotRules();
+  }
+
+  if (killSwitchActive) {
+    await sendText(
+      sock,
+      chatJid,
+      "🛑 *GLOBAL EMERGENCY KILL SWITCH IS ENGAGED!*\nAll auto-replies are currently suspended system-wide across all contacts.\n\n_To disengage:_ Toggle the kill switch in your ARGUS Web Dashboard.",
+      config
+    );
+    return;
+  }
+
   if (rules.length === 0) {
     const msg = [
       `🤖 *ARGUS Auto-Pilot Persona is currently OFF.*`,
@@ -1704,22 +1745,26 @@ async function handleAutopilotStatus(sock: WASocket, chatJid: string, config: Co
       `  _Example:_ *autopilot on for Alex*`,
       `• *autopilot on: [reason]* — Global busy mode for all 1-on-1 DMs`,
       `  _Example:_ *autopilot on: studying for exams, reply casually*`,
+      ``,
+      `_Tip:_ You can also configure contacts anytime in the Web Dashboard at http://100.92.175.117:3000/contacts`,
     ].join("\n");
     await sendText(sock, chatJid, msg, config);
     return;
   }
 
-  const lines = rules.map((r) => {
+  const lines = rules.map((r: any) => {
+    const tierName = r.tier === 2 ? "Tier 2: Autonomous ⚡" : r.tier === 1 ? "Tier 1: Supervised 🛡️" : "Tier 0: Draft 📝";
     const promptStr = r.custom_prompt ? `\n   📝 _Context:_ "${r.custom_prompt}"` : "";
-    return `👤 *${r.name}* (${r.jid})\n   ⚡ _Replies Sent:_ ${r.auto_reply_count}${promptStr}`;
+    const cleanPhone = r.jid.replace("@s.whatsapp.net", "");
+    return `👤 *${r.name}* (+${cleanPhone})\n   🎯 _${tierName}_\n   ⚡ _Replies Sent:_ ${r.auto_reply_count || 0}${promptStr}`;
   });
 
   const msg = [
-    `🤖 *Active Auto-Pilot Persona Rules (${rules.length}):*`,
+    `🤖 *Active Auto-Pilot Contacts (${rules.length}):*`,
     `────────────────────────────`,
     lines.join("\n\n"),
     `────────────────────────────`,
-    `_To disable:_ *autopilot off [Person]* or *autopilot off all*`,
+    `_To manage tiers:_ Configure contacts at http://100.92.175.117:3000/contacts`,
   ].join("\n");
 
   await sendText(sock, chatJid, msg, config);
