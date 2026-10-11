@@ -14,18 +14,24 @@ export function PwaRegister() {
   const [showInstallBanner, setShowInstallBanner] = useState(false);
 
   useEffect(() => {
-    // 1. Register Service Worker
+    // 1. Register Service Worker immediately (don't miss already-fired load event in Next.js)
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
+      const registerSW = () => {
         navigator.serviceWorker
           .register("/sw.js")
           .then((reg) => {
-            console.log("[PWA] Service Worker registered with scope:", reg.scope);
+            console.log("[PWA] Service Worker registered successfully with scope:", reg.scope);
           })
           .catch((err) => {
             console.warn("[PWA] Service Worker registration failed:", err);
           });
-      });
+      };
+
+      if (document.readyState === "complete" || document.readyState === "interactive") {
+        registerSW();
+      } else {
+        window.addEventListener("load", registerSW, { once: true });
+      }
     }
 
     // 2. Check if already installed / standalone

@@ -42,6 +42,7 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <link rel="manifest" href="/manifest.json" />
       </head>
       <body className="min-h-screen bg-[#080C14] text-slate-100 antialiased selection:bg-emerald-500/20 selection:text-emerald-300">
         {children}
