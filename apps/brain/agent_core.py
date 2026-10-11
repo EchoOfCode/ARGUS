@@ -36,6 +36,7 @@ TOOL_CLASSIFICATIONS: Dict[str, str] = {
     "record_expense": "write",
     "manage_memory": "write",
     "draft_whatsapp_message": "send",
+    "get_autopilot_status": "read",
 }
 
 
@@ -304,6 +305,35 @@ def tool_get_todos_and_reminders() -> Dict[str, Any]:
         conn.close()
 
 
+def tool_get_autopilot_status() -> Dict[str, Any]:
+    """Fetch current autopilot status, kill switch state, and configured autonomy rules."""
+    from db import get_kill_switch_status
+    ks_active = get_kill_switch_status()
+    conn = get_bridge_db()
+    if not conn:
+        return {"kill_switch_active": ks_active, "status": "Disabled (Kill Switch Active)" if ks_active else "Active", "rules": []}
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT cd.name, cd.jid, ar.tier, ar.status, ar.auto_reply_count, ar.last_replied_at
+            FROM autopilot_rules ar
+            JOIN chat_directory cd ON ar.jid = cd.jid
+            WHERE ar.status = 'active'
+            ORDER BY ar.tier DESC
+            """
+        )
+        rules = [dict(r) for r in cursor.fetchall()]
+        return {
+            "kill_switch_active": ks_active,
+            "status": "Disabled (Kill Switch Active)" if ks_active else "Active",
+            "active_rules_count": len(rules),
+            "configured_contacts": rules,
+        }
+    finally:
+        conn.close()
+
+
 def tool_manage_memory(action: str, fact: Optional[str] = None, category: Optional[str] = "General", query: Optional[str] = None) -> Dict[str, Any]:
     """Save, recall, or search facts in Second Brain memory."""
     if action == "save" and fact:
@@ -530,6 +560,14 @@ AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_autopilot_status",
+            "description": "Fetch the current autopilot status, global kill switch state, and list of contacts configured for auto-replies.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "record_expense",
             "description": "Log an expense, lending, or borrowed money in the ledger. E.g. 'Paid 450 for lunch' or 'Alex owes me 200 for taxi'.",
             "parameters": {
@@ -746,6 +784,10 @@ Current Reference Time: {now_iso}
                     )
                 elif fn_name == "create_todo":
                     tool_output = tool_create_todo(text=fn_args.get("text", "Task"))
+                elif fn_name == "get_todos_and_reminders":
+                    tool_output = tool_get_todos_and_reminders()
+                elif fn_name == "get_autopilot_status":
+                    tool_output = tool_get_autopilot_status()
                 elif fn_name == "draft_whatsapp_message":
                     tool_output = tool_draft_whatsapp_message(
                         recipient_name=fn_args.get("recipient_name", ""),
@@ -784,7 +826,21 @@ Current Reference Time: {now_iso}
             logger.error("Agent loop error: %s", e, exc_info=True)
             return f"I encountered an error executing that: {e}"
 
-    return "Done, boss."
+    # If all tool turns executed, do a final synthesis pass so the agent answers the user naturally
+    try:
+        final_response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=1000,
+        )
+        final_text = getattr(final_response.choices[0].message, "content", None)
+        if final_text and final_text.strip():
+            return final_text
+    except Exception as e:
+        logger.warning("Final synthesis turn error: %s", e)
+
+    return "All set, boss."
 
 
 # ─── AUTONOMOUS BACKGROUND EPISODIC MEMORY HARVESTER ────────────
