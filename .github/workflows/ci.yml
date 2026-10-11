@@ -146,7 +146,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Brain Docker Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./apps/brain
           file: ./apps/brain/Dockerfile
@@ -154,7 +154,7 @@ jobs:
           tags: argus-brain:test
 
       - name: Build Bridge Docker Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./apps/bridge
           file: ./apps/bridge/Dockerfile
@@ -162,7 +162,7 @@ jobs:
           tags: argus-bridge:test
 
       - name: Build Web Docker Image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./apps/web
           file: ./apps/web/Dockerfile
