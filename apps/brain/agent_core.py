@@ -50,17 +50,17 @@ def tool_list_contacts(prefix: Optional[str] = None, search: Optional[str] = Non
         cursor = conn.cursor()
         if prefix:
             cursor.execute(
-                "SELECT jid, name, is_group FROM chat_directory WHERE is_group = 0 AND (name LIKE ? OR name LIKE ?) ORDER BY name ASC LIMIT ?",
+                "SELECT jid, name, is_group FROM chat_directory WHERE is_group = 0 AND jid LIKE '%@s.whatsapp.net' AND NOT jid LIKE '%@lid' AND (name LIKE ? OR name LIKE ?) ORDER BY name ASC LIMIT ?",
                 (f"{prefix}%", f"#{prefix}%", limit),
             )
         elif search:
             cursor.execute(
-                "SELECT jid, name, is_group FROM chat_directory WHERE name LIKE ? ORDER BY name ASC LIMIT ?",
+                "SELECT jid, name, is_group FROM chat_directory WHERE is_group = 0 AND jid LIKE '%@s.whatsapp.net' AND NOT jid LIKE '%@lid' AND name LIKE ? ORDER BY name ASC LIMIT ?",
                 (f"%{search}%", limit),
             )
         else:
             cursor.execute(
-                "SELECT jid, name, is_group FROM chat_directory ORDER BY is_group ASC, name ASC LIMIT ?",
+                "SELECT jid, name, is_group FROM chat_directory WHERE is_group = 0 AND jid LIKE '%@s.whatsapp.net' AND NOT jid LIKE '%@lid' ORDER BY name ASC LIMIT ?",
                 (limit,),
             )
         return [dict(r) for r in cursor.fetchall()]

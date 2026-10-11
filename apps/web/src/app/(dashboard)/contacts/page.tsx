@@ -101,7 +101,10 @@ export default function ContactsPage() {
       ]);
       if (cRes.ok) {
         const data = await cRes.json();
-        setContacts(Array.isArray(data) ? data : []);
+        const validContacts = (Array.isArray(data) ? data : []).filter(
+          (c) => c && c.jid && !c.jid.endsWith("@lid") && !c.jid.includes("@lid") && !c.jid.includes("@broadcast")
+        );
+        setContacts(validContacts);
       }
       if (ksRes.ok) {
         const ksData = await ksRes.json();
@@ -368,6 +371,8 @@ export default function ContactsPage() {
   };
 
   const filteredContacts = contacts.filter((c) => {
+    if (!c || !c.jid) return false;
+    if (c.jid.endsWith("@lid") || c.jid.includes("@lid") || c.jid.includes("@broadcast")) return false;
     const q = search.toLowerCase();
     return c.name.toLowerCase().includes(q) || c.jid.toLowerCase().includes(q);
   });

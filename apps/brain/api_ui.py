@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from auth import verify_ui_auth
+from config import get_settings
 from db import (
     get_db,
     get_kill_switch_status,
@@ -269,8 +270,17 @@ async def act_on_approval(approval_id: str, payload: ApprovalActionRequest) -> D
 @ui_router.get("/contacts", dependencies=[Depends(require_ui_owner_auth)])
 async def list_contacts_and_tiers() -> List[Dict[str, Any]]:
     """List contacts with their configured autonomy tier and autopilot status."""
+    settings = get_settings()
+    owner_jid = settings.my_jid or ""
     with get_db() as conn:
         cursor = conn.cursor()
+        # Clean up any previously stored internal LIDs or broadcasts
+        cursor.execute("DELETE FROM chat_directory WHERE jid LIKE '%@lid' OR jid LIKE '%@broadcast'")
+        cursor.execute("DELETE FROM autopilot_rules WHERE jid LIKE '%@lid' OR jid LIKE '%@broadcast'")
+        if owner_jid:
+            cursor.execute("DELETE FROM chat_directory WHERE jid = ?", (owner_jid,))
+            cursor.execute("DELETE FROM autopilot_rules WHERE jid = ?", (owner_jid,))
+
         cursor.execute(
             """
             SELECT cd.jid, cd.name, cd.is_group,
@@ -280,11 +290,17 @@ async def list_contacts_and_tiers() -> List[Dict[str, Any]]:
                    ar.last_replied_at
             FROM chat_directory cd
             LEFT JOIN autopilot_rules ar ON cd.jid = ar.jid
-            WHERE cd.is_group = 0
+            WHERE cd.is_group = 0 
+              AND cd.jid LIKE '%@s.whatsapp.net' 
+              AND NOT cd.jid LIKE '%@lid'
+              AND NOT cd.jid LIKE '%@broadcast'
             ORDER BY cd.name ASC
             """
         )
-        return [dict(row) for row in cursor.fetchall()]
+        rows = [dict(row) for row in cursor.fetchall()]
+        if owner_jid:
+            rows = [r for r in rows if r["jid"] != owner_jid]
+        return rows
 
 
 @ui_router.patch("/contacts/{jid}/tier", dependencies=[Depends(require_ui_owner_auth)])
@@ -382,21 +398,38 @@ async def scan_history_for_contacts() -> Dict[str, Any]:
     discovered = 0
     with get_db() as conn:
         cursor = conn.cursor()
+        # Clean up any previously inserted internal LIDs or broadcasts
+        cursor.execute("DELETE FROM chat_directory WHERE jid LIKE '%@lid' OR jid LIKE '%@broadcast'")
+        cursor.execute("DELETE FROM autopilot_rules WHERE jid LIKE '%@lid' OR jid LIKE '%@broadcast'")
+
         cursor.execute(
             """
             SELECT DISTINCT sender_jid as jid, sender_name as name 
             FROM message_log 
-            WHERE sender_jid LIKE '%@s.whatsapp.net' AND sender_jid != 'owner' AND sender_jid != ''
+            WHERE sender_jid LIKE '%@s.whatsapp.net' 
+              AND NOT sender_jid LIKE '%@lid'
+              AND sender_jid != 'owner' 
+              AND sender_jid != ''
             UNION
             SELECT DISTINCT chat_jid as jid, chat_name as name 
             FROM message_log 
-            WHERE chat_jid LIKE '%@s.whatsapp.net' AND chat_jid != ''
+            WHERE chat_jid LIKE '%@s.whatsapp.net' 
+              AND NOT chat_jid LIKE '%@lid'
+              AND chat_jid != ''
             """
         )
+        settings = get_settings()
+        owner_jid = settings.my_jid or ""
         rows = cursor.fetchall()
         for r in rows:
             jid = r["jid"]
-            name = r["name"] or jid.split("@")[0]
+            if owner_jid and jid == owner_jid:
+                continue
+            name = (r["name"] or "").strip()
+            # If sender_name is empty or just the digits, use phone representation
+            if not name or name.isdigit():
+                name = jid.split("@")[0]
+
             cursor.execute(
                 """
                 INSERT INTO chat_directory (jid, name, is_group, updated_at)

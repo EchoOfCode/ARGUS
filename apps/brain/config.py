@@ -58,6 +58,7 @@ class BrainSettings(BaseSettings):
     email_port: int = Field(default=993, alias="EMAIL_PORT")
 
     # ─── Owner Profile Settings ─────────────────────────────────
+    my_jid: Optional[str] = Field(default=None, alias="MY_JID")
     owner_name: str = Field(default="User", alias="OWNER_NAME")
     owner_bio: str = Field(default="", alias="OWNER_BIO")
     owner_tone: str = Field(

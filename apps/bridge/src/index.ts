@@ -205,7 +205,7 @@ async function connectToWhatsApp(): Promise<void> {
     const contactList: Array<{ jid: string; name: string; is_group: boolean }> = [];
     if (contacts && Array.isArray(contacts)) {
       for (const c of contacts) {
-        if (c.id && (c.name || c.notify || c.verifiedName)) {
+        if (c.id && c.id !== config.myJid && !c.id.endsWith("@lid") && !c.id.includes("@broadcast") && (c.name || c.notify || c.verifiedName)) {
           contactList.push({
             jid: c.id,
             name: c.name || c.notify || c.verifiedName,
@@ -216,7 +216,7 @@ async function connectToWhatsApp(): Promise<void> {
     }
     if (chats && Array.isArray(chats)) {
       for (const ch of chats) {
-        if (ch.id && (ch.name || ch.subject)) {
+        if (ch.id && ch.id !== config.myJid && !ch.id.endsWith("@lid") && !ch.id.includes("@broadcast") && (ch.name || ch.subject)) {
           contactList.push({
             jid: ch.id,
             name: ch.name || ch.subject || ch.id.split("@")[0],
@@ -233,7 +233,7 @@ async function connectToWhatsApp(): Promise<void> {
 
   sock.ev.on("chats.upsert", async (chats: any[]) => {
     const contactList = chats
-      .filter((c) => c.id && (c.name || c.subject))
+      .filter((c) => c.id && c.id !== config.myJid && !c.id.endsWith("@lid") && !c.id.includes("@broadcast") && (c.name || c.subject))
       .map((c) => ({
         jid: c.id,
         name: c.name || c.subject,
@@ -246,7 +246,7 @@ async function connectToWhatsApp(): Promise<void> {
 
   sock.ev.on("contacts.upsert", async (contacts: any[]) => {
     const contactList = contacts
-      .filter((c) => c.id && (c.name || c.notify || c.verifiedName))
+      .filter((c) => c.id && c.id !== config.myJid && !c.id.endsWith("@lid") && !c.id.includes("@broadcast") && (c.name || c.notify || c.verifiedName))
       .map((c) => ({
         jid: c.id,
         name: c.name || c.notify || c.verifiedName,
@@ -259,7 +259,7 @@ async function connectToWhatsApp(): Promise<void> {
 
   sock.ev.on("contacts.update", async (updates: any[]) => {
     const contactList = updates
-      .filter((c) => c.id && (c.name || c.notify || c.verifiedName))
+      .filter((c) => c.id && c.id !== config.myJid && !c.id.endsWith("@lid") && !c.id.includes("@broadcast") && (c.name || c.notify || c.verifiedName))
       .map((c) => ({
         jid: c.id,
         name: c.name || c.notify || c.verifiedName,

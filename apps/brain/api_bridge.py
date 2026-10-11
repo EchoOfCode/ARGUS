@@ -14,6 +14,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from auth import verify_request_auth
+from config import get_settings
 from db import (
     get_db,
     get_financial_summary,
@@ -176,9 +177,25 @@ async def sync_contacts_endpoint(
 ) -> Dict[str, Any]:
     """Sync contact directory metadata."""
     await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    settings = get_settings()
+    owner_jid = settings.my_jid or ""
+    owner_name = settings.owner_name.strip().lower()
+    synced_count = 0
     with get_db() as conn:
         cursor = conn.cursor()
         for c in data.contacts:
+            jid = (c.jid or "").strip()
+            if not jid:
+                continue
+            if "@lid" in jid or "@broadcast" in jid:
+                continue
+            if not (jid.endswith("@s.whatsapp.net") or jid.endswith("@g.us")):
+                continue
+            if owner_jid and jid == owner_jid:
+                continue
+            c_name = (c.name or "").strip()
+            if not c.is_group and owner_name and c_name.lower() == owner_name:
+                continue
             cursor.execute(
                 """
                 INSERT INTO chat_directory (jid, name, is_group, updated_at)
@@ -188,9 +205,10 @@ async def sync_contacts_endpoint(
                     is_group = excluded.is_group,
                     updated_at = datetime('now')
                 """,
-                (c.jid, c.name, 1 if c.is_group else 0),
+                (jid, c.name, 1 if c.is_group else 0),
             )
-        return {"success": True, "count": len(data.contacts)}
+            synced_count += 1
+        return {"success": True, "count": synced_count}
 
 
 # ─── TODOS ──────────────────────────────────────────────────────
