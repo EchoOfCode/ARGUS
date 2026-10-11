@@ -326,9 +326,9 @@ async def create_contact(payload: ContactCreateRequest) -> Dict[str, Any]:
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO chat_directory (jid, name, is_group, last_message_at)
+            INSERT INTO chat_directory (jid, name, is_group, updated_at)
             VALUES (?, ?, 0, datetime('now'))
-            ON CONFLICT(jid) DO UPDATE SET name = excluded.name
+            ON CONFLICT(jid) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at
             """,
             (jid, name),
         )
@@ -358,9 +358,9 @@ async def import_contacts(payload: ContactBatchImportRequest) -> Dict[str, Any]:
             if len(digits) >= 7:
                 cursor.execute(
                     """
-                    INSERT INTO chat_directory (jid, name, is_group, last_message_at)
+                    INSERT INTO chat_directory (jid, name, is_group, updated_at)
                     VALUES (?, ?, 0, datetime('now'))
-                    ON CONFLICT(jid) DO UPDATE SET name = excluded.name
+                    ON CONFLICT(jid) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at
                     """,
                     (jid, name),
                 )
@@ -399,9 +399,9 @@ async def scan_history_for_contacts() -> Dict[str, Any]:
             name = r["name"] or jid.split("@")[0]
             cursor.execute(
                 """
-                INSERT INTO chat_directory (jid, name, is_group, last_message_at)
+                INSERT INTO chat_directory (jid, name, is_group, updated_at)
                 VALUES (?, ?, 0, datetime('now'))
-                ON CONFLICT(jid) DO UPDATE SET name = COALESCE(NULLIF(chat_directory.name, ''), excluded.name)
+                ON CONFLICT(jid) DO UPDATE SET name = COALESCE(NULLIF(chat_directory.name, ''), excluded.name), updated_at = excluded.updated_at
                 """,
                 (jid, name),
             )

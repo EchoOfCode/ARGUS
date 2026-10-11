@@ -82,9 +82,9 @@ def tool_save_contact(name: str, phone: str, tier: int = 0) -> Dict[str, Any]:
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO chat_directory (jid, name, is_group, last_message_at)
+            INSERT INTO chat_directory (jid, name, is_group, updated_at)
             VALUES (?, ?, 0, datetime('now'))
-            ON CONFLICT(jid) DO UPDATE SET name = excluded.name
+            ON CONFLICT(jid) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at
             """,
             (jid, name.strip()),
         )
