@@ -55,8 +55,8 @@ class TokenBucketRateLimiter:
             time.sleep(min(wait_time, 1.0))
 
 
-# Global rate limiter instance (high throughput with burst capacity)
-groq_rate_limiter = TokenBucketRateLimiter(max_requests_per_minute=60.0, capacity=30.0)
+# Global rate limiter instance (safe 25 RPM for Groq free-tier quotas)
+groq_rate_limiter = TokenBucketRateLimiter(max_requests_per_minute=25.0, capacity=20.0)
 
 
 def rate_limited(limiter: TokenBucketRateLimiter = groq_rate_limiter, max_retries: int = 2):

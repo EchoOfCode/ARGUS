@@ -74,6 +74,47 @@ def _get_provider_config() -> Tuple[str, str, Optional[str], Dict[str, str], str
     return "groq", api_key, base_url, {}, model
 
 
+def _sanitize_messages_for_cross_provider_fallback(messages: List[Any]) -> List[Dict[str, Any]]:
+    """
+    Sanitize multi-turn message history when falling back across LLM providers.
+    Prevents Gemini HTTP 400 errors caused by missing Google thought_signature
+    when previous turns contain Groq-generated tool calls or OpenAI tool messages.
+    """
+    sanitized: List[Dict[str, Any]] = []
+    for m in messages:
+        if isinstance(m, dict):
+            role = m.get("role", "user")
+            content = m.get("content") or ""
+            tool_calls = m.get("tool_calls")
+            name = m.get("name", "tool")
+        else:
+            role = getattr(m, "role", "user")
+            content = getattr(m, "content", "") or ""
+            tool_calls = getattr(m, "tool_calls", None)
+            name = getattr(m, "name", "tool")
+
+        if role == "assistant" and tool_calls:
+            call_names = []
+            for tc in tool_calls:
+                fn = getattr(tc, "function", None) if hasattr(tc, "function") else tc.get("function")
+                fn_name = getattr(fn, "name", "") if hasattr(fn, "name") else fn.get("name", "") if isinstance(fn, dict) else ""
+                if fn_name:
+                    call_names.append(fn_name)
+            summary = f"[Requested actions: {', '.join(call_names)}]"
+            sanitized.append({
+                "role": "assistant",
+                "content": f"{content}\n{summary}".strip() if content else summary,
+            })
+        elif role == "tool":
+            sanitized.append({
+                "role": "user",
+                "content": f"[Action Output for '{name}']:\n{content}",
+            })
+        else:
+            sanitized.append({"role": role, "content": content})
+    return sanitized
+
+
 class _RouterChatCompletions:
     def __init__(self, groq_client: Optional[OpenAI], gemini_client: Optional[OpenAI], groq_model: str, gemini_model: str):
         self.groq_client = groq_client
@@ -109,6 +150,19 @@ class _RouterChatCompletions:
                 logger.warning(f"[ROUTER] {p_name} call failed ({e}). Auto-failing over to {s_name} ({secondary_model})...")
                 fallback_kwargs = dict(kwargs)
                 fallback_kwargs["model"] = secondary_model
+
+                # Sanitize messages if switching between different providers
+                raw_msgs = fallback_kwargs.get("messages", [])
+                has_tool_turns = any(
+                    (isinstance(m, dict) and (m.get("role") == "tool" or m.get("tool_calls")))
+                    or (hasattr(m, "role") and (m.role == "tool" or getattr(m, "tool_calls", None)))
+                    for m in raw_msgs
+                )
+                if has_tool_turns:
+                    fallback_kwargs["messages"] = _sanitize_messages_for_cross_provider_fallback(raw_msgs)
+                    fallback_kwargs.pop("tools", None)
+                    fallback_kwargs.pop("tool_choice", None)
+
                 return secondary_client.chat.completions.create(**fallback_kwargs)
             raise e
 

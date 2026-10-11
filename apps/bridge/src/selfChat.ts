@@ -861,6 +861,29 @@ export async function handleSelfChatMessage(
     if (handled) return;
   }
 
+  // ─── Multi-Item Conversational Follow-Ups ("set reminders for all", "schedule all", "do all") ───
+  const isMultiItemFollowUp =
+    /^(yes\s+)?(set\s+reminders?\s+for\s+all|remind\s+(me\s+)?(for\s+)?all|all\s+of\s+them|do\s+all|set\s+all|schedule\s+all|create\s+all|add\s+all|for\s+all|remind\s+all|set\s+them\s+all|do\s+them\s+all|schedule\s+them\s+all)\b/i.test(
+      normalized.trim()
+    );
+
+  if (isMultiItemFollowUp) {
+    const recentHistory = getRecentMessages(chatJid, 10).map((m) => ({
+      text: m.message_text,
+      is_from_me: m.is_from_me === 1,
+      timestamp: m.timestamp,
+    }));
+    const askResult = await callBrain(config, "/ask", {
+      question: text,
+      use_web_search: false,
+      recent_history: recentHistory,
+    });
+    if (askResult && askResult.answer) {
+      await sendText(sock, chatJid, askResult.answer, config);
+    }
+    return;
+  }
+
   // ─── AI Intent Classification & Execution ───────────────────
   try {
     const result = await callBrain(config, "/process-message", {

@@ -314,21 +314,24 @@ def tool_get_autopilot_status() -> Dict[str, Any]:
         return {"kill_switch_active": ks_active, "status": "Disabled (Kill Switch Active)" if ks_active else "Active", "rules": []}
     try:
         cursor = conn.cursor()
+        # Only query contacts explicitly elevated to Tier 1 (Supervised) or Tier 2 (Autonomous)
         cursor.execute(
             """
-            SELECT cd.name, cd.jid, ar.tier, ar.status, ar.auto_reply_count, ar.last_replied_at
+            SELECT cd.name, REPLACE(cd.jid, '@s.whatsapp.net', '') as phone, ar.tier, ar.auto_reply_count
             FROM autopilot_rules ar
             JOIN chat_directory cd ON ar.jid = cd.jid
-            WHERE ar.status = 'active'
-            ORDER BY ar.tier DESC
+            WHERE ar.status = 'active' AND ar.tier > 0
+            ORDER BY ar.tier DESC, ar.auto_reply_count DESC
+            LIMIT 15
             """
         )
         rules = [dict(r) for r in cursor.fetchall()]
         return {
             "kill_switch_active": ks_active,
             "status": "Disabled (Kill Switch Active)" if ks_active else "Active",
-            "active_rules_count": len(rules),
-            "configured_contacts": rules,
+            "autonomous_contacts_count": len([r for r in rules if r["tier"] == 2]),
+            "supervised_contacts_count": len([r for r in rules if r["tier"] == 1]),
+            "configured_autonomous_contacts": rules,
         }
     finally:
         conn.close()
@@ -800,11 +803,15 @@ Current Reference Time: {now_iso}
                 else:
                     tool_output = {"error": f"Unknown tool {fn_name}"}
 
+                tool_str = json.dumps(tool_output)
+                if len(tool_str) > 2500:
+                    tool_str = tool_str[:2500] + "... [TRUNCATED FOR TOKEN SAFETY]"
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
                     "name": fn_name,
-                    "content": json.dumps(tool_output),
+                    "content": tool_str,
                 })
 
         except Exception as e:
