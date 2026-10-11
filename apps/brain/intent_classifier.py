@@ -60,6 +60,19 @@ def classify_intent_rules(message_text: str, is_self_chat: bool) -> Dict[str, An
     lower = text.lower()
 
     if is_self_chat:
+        # 0. Slash commands (Instant resolution without LLM token cost)
+        if text.startswith("/"):
+            cmd = text.split()[0].lower()
+            if cmd in ["/todaytasks", "/todaytodos", "/todos", "/tasks", "/todo", "/task"]:
+                return {"intent": "todo", "confidence": 1.0, "should_respond": True, "extract_data": {"action": "list"}}
+            if cmd in ["/briefing", "/agenda", "/plan"]:
+                return {"intent": "briefing", "confidence": 1.0, "should_respond": True, "extract_data": None}
+            return {"intent": "general_qa", "confidence": 1.0, "should_respond": True, "extract_data": {"command": cmd}}
+
+        # 0b. Maintenance & cleanup commands
+        if lower in ["clean up", "cleanup", "clear", "wipe", "clean", "reset", "clear context", "clear screen"]:
+            return {"intent": "general_qa", "confidence": 1.0, "should_respond": True, "extract_data": {"action": "cleanup"}}
+
         # 1. Email rules
         if re.search(r"\b(email|emails|mail|mails|inbox|unread)\b", lower):
             if re.search(r"\b(summarize|read|breakdown)\s+email", lower):
@@ -80,8 +93,8 @@ def classify_intent_rules(message_text: str, is_self_chat: bool) -> Dict[str, An
             ).strip()
             return {"intent": "catchup", "confidence": 1.0, "should_respond": True, "extract_data": {"target": target}}
 
-        # 3. Briefing rule
-        if re.search(r"\b(briefing|agenda|daily brief|morning brief|today'?s plan|overview of today)\b", lower):
+        # 3. Briefing & Daily Plan rules
+        if re.search(r"\b(briefing|agenda|daily brief|morning brief|today'?s plan|plan for today|schedule (for\s+)?today|overview of today|plan today)\b", lower):
             return {"intent": "briefing", "confidence": 1.0, "should_respond": True, "extract_data": None}
 
         # 4. Memory rules
@@ -115,7 +128,14 @@ def classify_intent_rules(message_text: str, is_self_chat: bool) -> Dict[str, An
             return {"intent": "todo", "confidence": 1.0, "should_respond": True, "extract_data": {"action": "add", "text": task_text}}
 
         # 8. Fast greetings & Chief of Staff check-ins (0ms instant resolution)
-        if lower in ["hi", "hello", "hey", "yo", "sup", "howdy", "gm", "good morning", "good evening", "online", "status", "ping", "are you there", "argus"]:
+        if lower in [
+            "hi", "hello", "hey", "yo", "sup", "howdy", "gm", "gn", "good morning", "good evening",
+            "online", "status", "ping", "pong", "are you there", "argus", "test", "testing", "help"
+        ]:
+            return {"intent": "general_qa", "confidence": 1.0, "should_respond": True, "extract_data": None}
+
+        # 9. Trivial acknowledgments & reactions
+        if lower in ["ok", "k", "okay", "cool", "nice", "fine", "kk", "lol", "lmao", "thanks", "thank you", "thx", "ty", "sure", "got it", "noted", "alright"]:
             return {"intent": "general_qa", "confidence": 1.0, "should_respond": True, "extract_data": None}
 
     else:

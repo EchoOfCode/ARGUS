@@ -40,9 +40,10 @@ class BrainSettings(BaseSettings):
         alias="LLM_PROVIDER",
     )
     groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
-    groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
+    groq_model: str = Field(default="qwen/qwen3.8-27b", alias="GROQ_MODEL")
+    groq_fallback_model: str = Field(default="openai/gpt-oss-20b", alias="GROQ_FALLBACK_MODEL")
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
-    gemini_model: str = Field(default="gemini-3.8-flash", alias="GEMINI_MODEL")
+    gemini_model: str = Field(default="gemini-flash-lite-latest", alias="GEMINI_MODEL")
     openrouter_api_key: Optional[str] = Field(default=None, alias="OPENROUTER_API_KEY")
     openrouter_model: Optional[str] = Field(default=None, alias="OPENROUTER_MODEL")
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")

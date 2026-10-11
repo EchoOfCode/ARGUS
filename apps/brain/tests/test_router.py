@@ -74,5 +74,31 @@ def test_router_failover_mechanism():
     result = router.chat_completion(messages)
 
     assert result == "Fallback response from Gemini"
-    mock_groq.chat_completion.assert_called_once()
+    # Called first with primary model, then with intra-provider fallback model
+    assert mock_groq.chat_completion.call_count == 2
     mock_gemini.chat_completion.assert_called_once()
+
+
+def test_router_groq_intra_model_fallback():
+    """Verify that if Groq primary model fails, it tries Groq intra-provider fallback before Gemini."""
+    router = RouterLLMProvider()
+    mock_groq = MagicMock()
+    mock_gemini = MagicMock()
+
+    # First call (qwen) fails, second call (openai/gpt-oss-20b) succeeds
+    mock_groq.chat_completion.side_effect = [
+        Exception("Groq 429 Rate Limit on qwen"),
+        "Success from Groq fallback model",
+    ]
+
+    router._groq_provider = mock_groq
+    router._gemini_provider = mock_gemini
+    router.groq_available = True
+    router.gemini_available = True
+
+    messages = [{"role": "user", "content": "Hello there"}]
+    result = router.chat_completion(messages)
+
+    assert result == "Success from Groq fallback model"
+    assert mock_groq.chat_completion.call_count == 2
+    mock_gemini.chat_completion.assert_not_called()

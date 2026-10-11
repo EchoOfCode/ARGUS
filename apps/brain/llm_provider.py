@@ -228,7 +228,7 @@ class GeminiProvider(BaseLLMProvider):
             api_key=self.api_key or "dummy",
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         )
-        self.default_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        self.default_model = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
 
     def chat_completion(
         self,
@@ -278,16 +278,16 @@ def classify_route_target(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
                 user_text = content
             elif isinstance(content, list):
                 # Multimodal or complex content structure -> Gemini
-                return "gemini", os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+                return "gemini", os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
             break
 
     lower = user_text.lower()
 
     # 1. Explicit user override
     if "@gemini" in lower or "use gemini" in lower or "/gemini" in lower:
-        return "gemini", os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        return "gemini", os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
     if "@groq" in lower or "use groq" in lower or "/groq" in lower:
-        return "groq", os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        return "groq", os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 
     # 2. Code, programming, algorithms, deep debugging -> Gemini
     code_indicators = (
@@ -297,7 +297,7 @@ def classify_route_target(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
         "dockerfile", "yaml", "json schema", "bug in my code", "write a script"
     )
     if any(ind in lower for ind in code_indicators):
-        return "gemini", os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        return "gemini", os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
 
     # 3. Deep reasoning, research, complex analysis, long queries (>100 words) -> Gemini
     reasoning_indicators = (
@@ -306,10 +306,10 @@ def classify_route_target(messages: List[Dict[str, Any]]) -> Tuple[str, str]:
         "mathematical", "calculate", "solve the equation", "comprehensive guide"
     )
     if any(ind in lower for ind in reasoning_indicators) or len(user_text.split()) > 100:
-        return "gemini", os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        return "gemini", os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
 
     # 4. Fast responses, casual chat, quick Q&A, greetings, formatting -> Groq
-    return "groq", os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    return "groq", os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 
 
 class RouterLLMProvider(BaseLLMProvider):
@@ -324,7 +324,8 @@ class RouterLLMProvider(BaseLLMProvider):
         self.groq_available = bool(os.getenv("GROQ_API_KEY"))
         self.gemini_available = bool(os.getenv("GEMINI_API_KEY"))
         self.groq_model = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
-        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        self.groq_fallback_model = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")
+        self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
         self._groq_provider: Optional[GroqProvider] = GroqProvider() if self.groq_available else None
         self._gemini_provider: Optional[GeminiProvider] = GeminiProvider() if self.gemini_available else None
 
@@ -363,6 +364,23 @@ class RouterLLMProvider(BaseLLMProvider):
                 response_format=response_format,
             )
         except Exception as e:
+            if primary[0] == "groq" and self._groq_provider and primary[2] != self.groq_fallback_model:
+                try:
+                    logger.warning(
+                        f"[ROUTER] Groq primary model '{primary[2]}' failed ({e}). "
+                        f"Attempting intra-provider fallback to Groq '{self.groq_fallback_model}'..."
+                    )
+                    return self._groq_provider.chat_completion(
+                        messages=messages,
+                        model=self.groq_fallback_model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        tools=tools,
+                        response_format=response_format,
+                    )
+                except Exception as intra_e:
+                    logger.warning(f"[ROUTER] Groq intra-fallback model '{self.groq_fallback_model}' also failed ({intra_e}).")
+
             if secondary:
                 logger.warning(
                     f"[ROUTER] Primary provider '{primary[0]}' failed ({e}). Auto-failing over to '{secondary[0]}'..."

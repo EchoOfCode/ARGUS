@@ -39,7 +39,7 @@ def _get_provider_config() -> Tuple[str, str, Optional[str], Dict[str, str], str
     if provider == "gemini":
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY") or ""
         base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-        model = os.getenv("GEMINI_MODEL") or "gemini-3.8-flash"
+        model = os.getenv("GEMINI_MODEL") or "gemini-flash-lite-latest"
         return "gemini", api_key, base_url, {}, model
 
     # 3. OpenAI Direct
@@ -120,6 +120,7 @@ class _RouterChatCompletions:
         self.groq_client = groq_client
         self.gemini_client = gemini_client
         self.groq_model = groq_model
+        self.groq_fallback_model = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")
         self.gemini_model = gemini_model
 
     def create(self, **kwargs: Any) -> Any:
@@ -146,6 +147,22 @@ class _RouterChatCompletions:
         try:
             return primary_client.chat.completions.create(**call_kwargs)
         except Exception as e:
+            # 1. If Groq primary model failed, try Groq intra-provider fallback model first
+            if p_name == "groq" and self.groq_client and primary_model != self.groq_fallback_model:
+                try:
+                    logger.warning(
+                        f"[ROUTER] Groq primary model '{primary_model}' failed ({e}). "
+                        f"Attempting intra-provider fallback to Groq '{self.groq_fallback_model}'..."
+                    )
+                    intra_kwargs = dict(kwargs)
+                    intra_kwargs["model"] = self.groq_fallback_model
+                    return self.groq_client.chat.completions.create(**intra_kwargs)
+                except Exception as intra_e:
+                    logger.warning(
+                        f"[ROUTER] Groq intra-fallback model '{self.groq_fallback_model}' also failed ({intra_e})."
+                    )
+
+            # 2. Cross-provider fallback to Gemini
             if secondary_client:
                 logger.warning(f"[ROUTER] {p_name} call failed ({e}). Auto-failing over to {s_name} ({secondary_model})...")
                 fallback_kwargs = dict(kwargs)
@@ -172,7 +189,7 @@ class _RouterClientWrapper:
         groq_key = os.getenv("GROQ_API_KEY")
         gemini_key = os.getenv("GEMINI_API_KEY")
         groq_model = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
-        gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        gemini_model = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
 
         headers = {"Accept-Encoding": "gzip, deflate"}
 
