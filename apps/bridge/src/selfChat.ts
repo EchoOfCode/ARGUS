@@ -658,6 +658,38 @@ export async function handleSelfChatMessage(
         return;
       }
 
+      case "offline": {
+        const askResult = await callBrain(config, "/ask", { question: "/offline" });
+        if (askResult && askResult.answer) {
+          await sendText(sock, chatJid, askResult.answer, config);
+        }
+        return;
+      }
+
+      case "online": {
+        const askResult = await callBrain(config, "/ask", { question: "/online" });
+        if (askResult && askResult.answer) {
+          await sendText(sock, chatJid, askResult.answer, config);
+        }
+        return;
+      }
+
+      case "mode": {
+        const askResult = await callBrain(config, "/ask", { question: "/mode" });
+        if (askResult && askResult.answer) {
+          await sendText(sock, chatJid, askResult.answer, config);
+        }
+        return;
+      }
+
+      case "status": {
+        const askResult = await callBrain(config, "/ask", { question: "/status" });
+        if (askResult && askResult.answer) {
+          await sendText(sock, chatJid, askResult.answer, config);
+        }
+        return;
+      }
+
       default: {
         // Unknown or custom slash command (e.g. /summary, /schedule, /weather, etc.)
         // Pass directly to the ReAct agent with recent history so it reasons intelligently!
@@ -667,7 +699,7 @@ export async function handleSelfChatMessage(
           timestamp: m.timestamp,
         }));
         const askResult = await callBrain(config, "/ask", {
-          question: rawCmd,
+          question: text.startsWith("/") ? text : rawCmd,
           use_web_search: false,
           recent_history: recentHistory,
         });
@@ -833,6 +865,31 @@ export async function handleSelfChatMessage(
       await sendText(sock, chatJid, "✨ *All debts settled!* Nobody owes you money, and you have no pending debts.", config);
     } else {
       await sendText(sock, chatJid, `💰 *Financial Debts & Split Ledger:*\n────────────────────────────\n${sections.join("\n\n")}`, config);
+    }
+    return;
+  }
+
+  // ─── Online / Offline Mode Commands ────────────────────────
+  if (["offline", "offline mode", "disable online mode", "go offline"].includes(normalized)) {
+    const askResult = await callBrain(config, "/ask", { question: "/offline" });
+    if (askResult && askResult.answer) {
+      await sendText(sock, chatJid, askResult.answer, config);
+    }
+    return;
+  }
+
+  if (["online", "online mode", "enable online mode", "go online"].includes(normalized)) {
+    const askResult = await callBrain(config, "/ask", { question: "/online" });
+    if (askResult && askResult.answer) {
+      await sendText(sock, chatJid, askResult.answer, config);
+    }
+    return;
+  }
+
+  if (["mode", "current mode", "what mode"].includes(normalized)) {
+    const askResult = await callBrain(config, "/ask", { question: "/mode" });
+    if (askResult && askResult.answer) {
+      await sendText(sock, chatJid, askResult.answer, config);
     }
     return;
   }

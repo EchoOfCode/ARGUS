@@ -139,7 +139,10 @@ class SystemOneEngine:
             )
 
         # ─── 2B. ONLINE / OFFLINE MODE TOGGLE (ZERO TOKENS) ───────────
-        if lower in ["/offline", "offline mode", "/mode offline", "disable online mode", "go offline"]:
+        if lower in [
+            "/offline", "offline", "offline mode", "/mode offline", "mode offline",
+            "disable online mode", "go offline", "turn off online", "turn offline"
+        ]:
             from db import set_offline_mode
             set_offline_mode(True)
             logger.info("[SYSTEM 1] Fast-path executed: Offline mode enabled (0 tokens)")
@@ -151,7 +154,10 @@ class SystemOneEngine:
                 "_Type */online* to re-enable Cloud AI._"
             )
 
-        if lower in ["/online", "online mode", "/mode online", "enable online mode", "go online"]:
+        if lower in [
+            "/online", "online", "online mode", "/mode online", "mode online",
+            "enable online mode", "go online", "turn on online", "turn online"
+        ]:
             from db import set_offline_mode
             set_offline_mode(False)
             logger.info("[SYSTEM 1] Fast-path executed: Online mode enabled (0 tokens)")
@@ -161,7 +167,7 @@ class SystemOneEngine:
                 "• *Cloud AI:* Complex reasoning, research, and coding will seamlessly use Cloud AI (Groq / Gemini)."
             )
 
-        if lower in ["/mode", "mode", "current mode", "what mode"]:
+        if lower in ["/mode", "mode", "current mode", "what mode", "check mode"]:
             from db import get_offline_mode
             offline = get_offline_mode()
             return (
