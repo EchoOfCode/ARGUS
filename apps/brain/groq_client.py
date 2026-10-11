@@ -85,7 +85,6 @@ class _RouterChatCompletions:
         messages = kwargs.get("messages", [])
         from llm_provider import classify_route_target
         target_name, target_model = classify_route_target(messages)
-        active_model = kwargs.get("model") or target_model
 
         if target_name == "gemini" and self.gemini_client:
             primary_client, primary_model, p_name = self.gemini_client, self.gemini_model, "gemini"

@@ -5,12 +5,9 @@ Unit tests for the Intelligent LLM Router (Groq <-> Gemini) and dynamic routing 
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
 from llm_provider import (
-    GeminiProvider,
     RouterLLMProvider,
     classify_route_target,
-    get_llm_provider,
 )
 
 
