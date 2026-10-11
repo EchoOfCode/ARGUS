@@ -68,6 +68,9 @@ jobs:
 
       - name: Run characterization tests
         run: python -m pytest tests/ -v
+        env:
+          ARGUS_TEST_MODE: "1"
+          ARGUS_SECRET: "test_mock_secret_for_pytest_environment_32chars!"
 
   bridge-checks:
     name: Bridge (Node) Typecheck & Tests
