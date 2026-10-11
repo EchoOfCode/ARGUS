@@ -1,0 +1,74 @@
+{
+  "name": "ARGUS Control Plane",
+  "short_name": "ARGUS",
+  "description": "Autonomous Personal AI Chief of Staff & WhatsApp Intelligence Platform",
+  "start_url": "/chat",
+  "scope": "/",
+  "id": "/?source=pwa",
+  "display": "standalone",
+  "display_override": ["standalone", "window-controls-overlay"],
+  "orientation": "portrait-primary",
+  "background_color": "#080C14",
+  "theme_color": "#080C14",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Chief of Staff Chat",
+      "short_name": "Chat",
+      "description": "Open direct chat with ARGUS Chief of Staff",
+      "url": "/chat",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Outbound Approvals",
+      "short_name": "Approvals",
+      "description": "Review and release queued outbound drafts",
+      "url": "/approvals",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Second Brain & Notes",
+      "short_name": "Brain",
+      "description": "Search personal memory facts and documents",
+      "url": "/memory",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Expenses & Ledger",
+      "short_name": "Ledger",
+      "description": "View tracked transactions and financial records",
+      "url": "/ledger",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

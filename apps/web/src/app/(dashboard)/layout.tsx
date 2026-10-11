@@ -31,6 +31,14 @@ const NAV_ITEMS = [
   { href: "/status", label: "System Status", icon: Server },
 ];
 
+const MOBILE_BOTTOM_TABS = [
+  { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/approvals", label: "Approvals", icon: Inbox, badgeKey: "approvals" },
+  { href: "/memory", label: "Brain", icon: Brain },
+  { href: "/ledger", label: "Ledger", icon: Receipt },
+  { href: "/status", label: "Status", icon: Server },
+];
+
 export default function DashboardLayout({
   children,
 }: {
@@ -304,10 +312,50 @@ export default function DashboardLayout({
         )}
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-24 sm:pb-8">
           <div className="max-w-7xl mx-auto">{children}</div>
         </main>
       </div>
+
+      {/* ─── Mobile Bottom Navigation Bar (PWA Phone Experience) ─── */}
+      <nav
+        id="mobile-bottom-nav"
+        className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0A0F1D]/95 backdrop-blur-xl border-t border-slate-800/80 px-2 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))]"
+      >
+        <div className="grid grid-cols-5 gap-1">
+          {MOBILE_BOTTOM_TABS.map((tab) => {
+            const isActive = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+            const Icon = tab.icon;
+            const hasBadge = tab.badgeKey === "approvals" && pendingApprovalsCount > 0;
+
+            return (
+              <a
+                key={tab.href}
+                href={tab.href}
+                className={cn(
+                  "flex flex-col items-center justify-center py-1 px-1 rounded-xl text-[10px] font-medium transition-all relative",
+                  isActive
+                    ? "text-emerald-400 font-semibold"
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                <div className="relative">
+                  <Icon className={cn("w-5 h-5", isActive ? "text-emerald-400" : "text-slate-400")} />
+                  {hasBadge && (
+                    <span className="absolute -top-1.5 -right-2 px-1.5 py-0.2 text-[9px] font-bold rounded-full bg-amber-500 text-[#080C14]">
+                      {pendingApprovalsCount}
+                    </span>
+                  )}
+                </div>
+                <span className="mt-1 truncate max-w-full">{tab.label}</span>
+                {isActive && (
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 mt-0.5 shadow-sm shadow-emerald-400/50" />
+                )}
+              </a>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }
