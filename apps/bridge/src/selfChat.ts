@@ -682,6 +682,8 @@ export async function handleSelfChatMessage(
         return;
       }
 
+      case "s":
+      case "st":
       case "status": {
         const askResult = await callBrain(config, "/ask", { question: "/status" });
         if (askResult && askResult.answer) {

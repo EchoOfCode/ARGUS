@@ -291,6 +291,11 @@ async function connectToWhatsApp(): Promise<void> {
       // Skip empty protocol messages (like key distribution, receipts)
       if (!msg.message) continue;
 
+      const remoteJid = msg.key.remoteJid || "";
+      const isFromMe = Boolean(msg.key.fromMe);
+      const participant = msg.key.participant || "";
+      logger.info({ remoteJid, isFromMe, participant, type }, "Incoming WhatsApp message upsert");
+
       if (msg.key.id && msg.message) {
         rawMessageStore.set(msg.key.id, msg.message);
         if (rawMessageStore.size > 2000) {

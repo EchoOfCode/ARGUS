@@ -29,7 +29,7 @@ import {
 } from "./replySender.js";
 import { handleSelfChatMessage } from "./selfChat.js";
 import { callBrain, callBrainMultipart } from "./brainClient.js";
-import { isAuthorizedCommandTurn, isCommandChannel } from "./authority.js";
+import { isAuthorizedCommandTurn, isCommandChannel, getOwnerLid } from "./authority.js";
 import { isBridgeOriginatedMessage } from "./policy/dispatcher.js";
 
 const logger = pino({ name: "argus:handler" });
@@ -232,12 +232,18 @@ export async function handleMessage(
     senderJid,
     isBridgeOriginated: Boolean(msg.key.id && isBridgeOriginatedMessage(msg.key.id)),
     ownerJid: config.myJid,
+    ownerLid: getOwnerLid(),
     commandGroupJid: config.commandGroupJid,
+    isFromMe,
   });
+
+  if (isCommandChat) {
+    console.log(`⚡ [Command Channel] Msg from ${senderJid} (fromMe=${isFromMe}) authorized=${isAuthorized}`);
+  }
 
   // Strict Scoping (ADR 0002): Non-owner in command channel gets ZERO tokens, ZERO tool calls, ZERO response
   if (isCommandChat && !isAuthorized) {
-    logger.warn({ senderJid, chatJid }, "Ignored non-owner message in command channel (0 tokens/actions)");
+    logger.warn({ senderJid, chatJid, ownerLid: getOwnerLid() }, "Ignored non-owner message in command channel (0 tokens/actions)");
     return;
   }
 

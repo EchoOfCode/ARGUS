@@ -8,6 +8,20 @@ export interface OwnerIdentity {
   ownerLid?: string;
 }
 
+let activeOwnerIdentity: OwnerIdentity | null = null;
+
+export function setOwnerIdentity(identity: OwnerIdentity): void {
+  activeOwnerIdentity = identity;
+}
+
+export function getOwnerIdentity(): OwnerIdentity | null {
+  return activeOwnerIdentity;
+}
+
+export function getOwnerLid(): string | undefined {
+  return activeOwnerIdentity?.ownerLid;
+}
+
 /**
  * Derive authenticated owner identity from the paired Baileys session credentials.
  * Asserts that the configured MY_JID matches the session identity.
@@ -18,7 +32,9 @@ export function deriveOwnerIdentity(
 ): OwnerIdentity {
   if (!sockUser || !sockUser.id) {
     if (configuredOwnerJid) {
-      return { ownerJid: jidNormalizedUser(configuredOwnerJid) };
+      const fallback = { ownerJid: jidNormalizedUser(configuredOwnerJid) };
+      setOwnerIdentity(fallback);
+      return fallback;
     }
     throw new Error("Cannot derive owner identity: neither paired session user nor configured MY_JID is available.");
   }
@@ -35,7 +51,9 @@ export function deriveOwnerIdentity(
     }
   }
 
-  return { ownerJid: derivedOwnerJid, ownerLid };
+  const identity: OwnerIdentity = { ownerJid: derivedOwnerJid, ownerLid };
+  setOwnerIdentity(identity);
+  return identity;
 }
 
 /**
@@ -54,8 +72,9 @@ export function isOwnerSender(
     return true;
   }
 
-  if (ownerLid) {
-    const normOwnerLid = jidNormalizedUser(ownerLid);
+  const effectiveLid = ownerLid || activeOwnerIdentity?.ownerLid;
+  if (effectiveLid) {
+    const normOwnerLid = jidNormalizedUser(effectiveLid);
     if (areJidsSameUser(normSender, normOwnerLid)) {
       return true;
     }
@@ -105,8 +124,10 @@ export function isAuthorizedCommandTurn(params: {
   ownerJid: string;
   ownerLid?: string;
   commandGroupJid?: string;
+  isFromMe?: boolean;
 }): boolean {
-  const { chatJid, senderJid, isBridgeOriginated, ownerJid, ownerLid, commandGroupJid } = params;
+  const { chatJid, senderJid, isBridgeOriginated, ownerJid, commandGroupJid, isFromMe } = params;
+  const ownerLid = params.ownerLid || activeOwnerIdentity?.ownerLid;
 
   if (isBridgeOriginated) {
     logger.debug({ senderJid }, "Authority rejected: message is bridge-originated");
@@ -118,8 +139,13 @@ export function isAuthorizedCommandTurn(params: {
     return false;
   }
 
+  // If the message is marked fromMe, it originated from the owner's WhatsApp account
+  if (isFromMe) {
+    return true;
+  }
+
   if (!isOwnerSender(senderJid, ownerJid, ownerLid)) {
-    logger.warn({ senderJid, chatJid }, "Authority rejected: sender is not the authenticated owner");
+    logger.warn({ senderJid, chatJid, ownerLid }, "Authority rejected: sender is not the authenticated owner");
     return false;
   }
 
