@@ -87,12 +87,14 @@ ARGUS transforms personal WhatsApp into an executive AI control center. Rather t
 | **`pypdf`** | PDF Intelligence | Binary stream text and structure extraction from academic and corporate PDFs |
 | **`ddgs`** | Live Web Grounding | Real-time live web searches with anti-blocking headers |
 
-### 3. Web Cockpit Dashboard
+### 3. ARGUS Web Control Plane (`apps/web`)
 | Technology | Role | Details |
 | :--- | :--- | :--- |
-| **HTML5 & Semantic CSS3** | UI Shell | Glassmorphic dark-mode dashboard with responsive grid design |
-| **Vanilla JavaScript (ES6+)** | Frontend Logic | Zero-dependency, framework-free reactive UI (sub-millisecond load time) |
-| **Fetch API & REST** | Data Sync | Real-time telemetry, toggle controls, and interactive Agent Chat studio |
+| **Next.js 14+ (App Router)** | Web Framework | Server-rendered and client-reactive owner control plane running on Node.js 20+ |
+| **TypeScript 5.x** | Language | Type-safe React components, route handlers, and API client interfaces |
+| **Tailwind CSS & Lucide Icons** | Design System | High-density dark-mode executive UI with responsive glassmorphic cards |
+| **AG-UI Protocol (SSE)** | Streaming Engine | Server-Sent Events stream connecting browser to FastAPI agent tool execution |
+| **Caddy 2** | Reverse Proxy | Automated localhost reverse proxy at `http://127.0.0.1:3000` with Tailscale integration |
 
 ---
 
@@ -131,6 +133,50 @@ ARGUS transforms personal WhatsApp into an executive AI control center. Rather t
 ### 4. Multimodal Document & Vision Intelligence
 * **Location:** [`apps/brain/vision_doc_analyzer.py`](file:///e:/ARGUS/apps/brain/vision_doc_analyzer.py)
 * Extracts syllabus deadlines, exam dates, invoice costs, and meeting notes from PDF documents and image attachments.
+
+### 5. System 1: Zero-Token Local Decision Engine
+* **Location:** [`apps/brain/system_one.py`](file:///e:/ARGUS/apps/brain/system_one.py)
+* **Design Philosophy:** Non-autoregressive, deterministic execution pipeline.
+* **Mechanism:**
+  * Intercepts messages before cloud generative LLM loops (`agent_core.py`).
+  * Resolves deterministic operations in **< 5ms** with **0 cloud tokens**:
+    * **Todo CRUD:** `/todos`, `add <task>`, `done #<id>`, `delete #<id>`.
+    * **Reminders:** Natural language time offsets (`in 45 mins`, `tomorrow morning`), `/reminders`, cancellation.
+    * **Expenses & Ledgers:** `spent <amt> on <category>`, `/ledger`, `/expenses`, debt balances.
+    * **Diagnostics:** `/status`, `/s`, `/ping`, `/health`.
+    * **Context Maintenance:** `clean up`, `clear context`.
+    * **Conversational Fast Path:** Instant deterministic acknowledgments.
+  * If a request requires complex reasoning, it cleanly yields to System 2 (Groq / Gemini).
+
+### 6. Multi-Model Cloud AI Router & Automatic Failover
+* **Location:** [`apps/brain/llm_provider.py`](file:///e:/ARGUS/apps/brain/llm_provider.py)
+* **Router Architecture (`LLM_PROVIDER=router`):**
+  * **Intelligent Query Classifier:**
+    * **Groq Primary (`qwen/qwen3.8-27b` or `llama-3.3-70b-versatile`):** Real-time conversational dialogue, quick Q&A, and fast catch-ups.
+    * **Google Gemini (`gemini-flash-lite-latest`):** Deep code debugging, mathematical reasoning, long queries (>100 words), multimodal inputs, and research tasks.
+    * **User Directives:** Direct overrides via `@gemini` or `@groq`.
+  * **Resilient Multi-Tier Failover:**
+    * **Intra-Provider Failover:** On Groq rate limit (429) or error, automatically retries on `openai/gpt-oss-20b`.
+    * **Cross-Provider Failover:** Seamless failover between Groq and Gemini if either provider is unavailable.
+  * **Log Redaction:** Sanitizes user messages in logs (`[CONTENT_REDACTED len=N]`) unless `ARGUS_DEBUG_LOG_CONTENT=1` is set.
+
+### 7. Online vs. Offline Operating Modes
+* **WhatsApp Commands:** `/offline`, `/offline mode`, `/online`, `/online mode`, `/mode`.
+* **State Persistence:** Stored in `system_settings` table (`key='offline_mode'`) in `argus.db`.
+* **Strict Zero-Token Guard:** When in Offline Mode, System 2 cloud calls are completely blocked. All tasks, reminders, expenses, status checks, and local notes run 100% locally from SQLite. Non-local queries return an informative offline banner rather than consuming cloud tokens.
+
+### 8. Outbound Policy Engine & Autopilot Tiering (ADR 0003)
+* **Location:** [`apps/bridge/src/policy/dispatcher.ts`](file:///e:/ARGUS/apps/bridge/src/policy/dispatcher.ts) & [`apps/brain/api_bridge.py`](file:///e:/ARGUS/apps/brain/api_bridge.py)
+* **Strict Group Chat Isolation:** Autonomous persona replies are strictly prohibited in group chats. Auto-replies execute exclusively in 1-on-1 direct messages if the recipient is explicitly enabled in Autopilot rules.
+* **Autonomy Tiers:**
+  * **Tier 0 (Draft Only):** Replies are generated as drafts and held in the Approvals Inbox for owner confirmation.
+  * **Tier 1 (Supervised):** Requires an active 15-minute approval token or explicit confirmation.
+  * **Tier 2 (Autonomous):** Direct reply sent after natural typing delay with an 8-second undo grace period.
+* **Contact Substring Resolution:** Fuzzy matches incoming senders against stored rules (e.g., rule `harshith` matches `Harshith Nadella`).
+* **Emergency Bulk Killswitch:**
+  * `/autopilot off for all`: Instantly disables all autopilot rules in SQLite and sets global toggle to `0`.
+  * `/killswitch on` / `/killswitch off`: Master silence switch for all outgoing messages.
+  * Direct approval via `/approve <id>` and `/reject <id>`.
 
 ---
 
@@ -202,22 +248,32 @@ ARGUS/
 ├── apps/
 │   ├── brain/                  # FastAPI Python Cognitive Engine & Memory
 │   │   ├── agent_core.py       # Autonomous ReAct Agent Loop
+│   │   ├── system_one.py       # Zero-Token Local Decision & Execution Engine
+│   │   ├── llm_provider.py     # Multi-Model Router (Groq/Gemini/Ollama) & Failover
 │   │   ├── config.py           # Pydantic Settings Validation
 │   │   ├── stylometry.py       # Linguistic Persona Learning Engine
-│   │   ├── dashboard.py        # Web Cockpit Studio & REST API
+│   │   ├── api_bridge.py       # Inter-service Bridge Endpoints & Policy Engine
+│   │   ├── api_ui.py           # AG-UI SSE Stream & REST API for Control Plane
 │   │   ├── main.py             # FastAPI App & HMAC Auth Middleware
 │   │   └── requirements.txt    # Python Dependencies
-│   └── bridge/                 # Node.js TypeScript WhatsApp Bridge
+│   ├── bridge/                 # Node.js TypeScript WhatsApp Bridge
+│   │   ├── src/
+│   │   │   ├── index.ts        # Baileys Socket Lifecycle & Auth Manager
+│   │   │   ├── messageHandler.ts # Message Ingestion & Media Pipeline
+│   │   │   ├── selfChat.ts     # Command Processor & Slash Commands
+│   │   │   ├── policy/         # Outbound Policy Dispatcher & Safety Filters
+│   │   │   ├── config.ts       # Zod Runtime Configuration Validator
+│   │   │   └── db.ts           # SQLite Database Access Layer
+│   │   └── package.json        # Node.js Dependencies
+│   └── web/                    # Next.js 14+ TypeScript Web Control Plane
 │       ├── src/
-│       │   ├── index.ts        # Baileys Socket Lifecycle & Auth Manager
-│       │   ├── messageHandler.ts # Message Ingestion & Media Pipeline
-│       │   ├── selfChat.ts     # Command Processor & Fast-Path Router
-│       │   ├── config.ts       # Zod Runtime Configuration Validator
-│       │   └── db.ts           # SQLite Database Access Layer
-│       └── package.json        # Node.js Dependencies
-├── deploy/                     # Production & Development Docker Compose configurations
-├── docs/                       # Architecture & Security Incident documentation
+│       │   ├── app/            # App Router (chat, approvals, contacts, memory, ledger)
+│       │   ├── components/     # High-Density UI Components & AG-UI Tool Cards
+│       │   └── lib/            # Server Actions & FastAPI HTTP Client
+│       └── package.json        # Web Dependencies
+├── deploy/                     # Caddy, Docker Compose & homelab configurations
+├── docs/                       # Architecture, API Spec, & Security documentation
 ├── scripts/                    # Convenience setup and launch scripts
-├── Makefile                    # Standard developer automation commands
+├── Makefile                    # Developer automation commands
 └── justfile                    # Just runner configuration
 ```

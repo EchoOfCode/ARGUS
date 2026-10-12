@@ -1,37 +1,64 @@
-# Roadmap
+# ARGUS Development Roadmap & Milestones
 
-Build strictly in this order. Do not start a phase until the previous phase's acceptance criteria are met.
+> Phased architectural roadmap documenting completed phases and future engineering goals.
 
-## Phase 1 — Notification capture (no LLM yet)
-- [ ] Create Android project (Kotlin, min SDK 26+)
-- [ ] Implement `NotificationListenerService`, request the listener permission via the system settings intent
-- [ ] Maintain an allowlist of app packages to listen to (start with WhatsApp + default SMS app)
-- [ ] Log captured notifications (app package, text, timestamp) to a local Room/SQLite table — no network calls yet
-- [ ] Request battery optimization exemption on first run
+---
 
-**Acceptance criteria:** sending yourself a WhatsApp/SMS message with a date/time reference results in a row in the local database, visible via a debug screen or Logcat.
+## ✅ Completed Phases
 
-## Phase 2 — Pre-filter + backend extraction
-- [ ] Implement the on-device regex/keyword pre-filter (day names, time patterns, meeting keywords)
-- [ ] Stand up the FastAPI backend on the laptop with `POST /extract-event` (see API_SPEC.md)
-- [ ] Wire the Groq SDK call inside that endpoint, matching the exact prompt/response contract in API_SPEC.md
-- [ ] Set up Tailscale on both laptop and phone, confirm they can reach each other
-- [ ] Android: on a pre-filter match, POST the candidate to the backend over Tailscale; store the returned result against the queue row
+### Phase 1 — Foundation, Gateway & Ingestion
+- [x] Node.js 20+ WhatsApp bridge daemon using `@whiskeysockets/baileys` Multi-Device WebSockets.
+- [x] QR code terminal pairing and persistent encrypted session management (`auth_info/`).
+- [x] Inter-service HMAC-SHA256 request signing (`X-Argus-Signature` & `X-Argus-Timestamp`).
+- [x] SQLite Write-Ahead Logging (WAL) message journaling and chat directory indexing.
+- [x] Dedicated private command channel (`ARGUS` group) and self-chat routing.
+- [x] Cron-based reminder worker with automated WhatsApp dispatch.
 
-**Acceptance criteria:** a real message like "let's meet tuesday at 3pm" produces a backend response with `is_event: true`, a plausible title, date, and time, visible in the local queue table.
+### Phase 2 — Cognitive Brain & Autonomous ReAct Engine
+- [x] FastAPI ASGI backend with Pydantic v2 data contracts.
+- [x] Multi-turn ReAct (Reasoning + Acting) loop in `agent_core.py`.
+- [x] Native tool-calling ecosystem:
+  - Task & Todo management (`create_todo`, `list_todos`, `complete_todo`, `delete_todo`).
+  - Time-based reminders (`create_reminder`, `cancel_reminder`).
+  - Google Calendar event link generation (`schedule_event`, `get_agenda`).
+  - Financial expense and split-bill ledger (`record_expense`, `get_financial_summary`, `settle_debt`).
+  - Second Brain memory vault with automatic categorization (`manage_memory`).
+  - Live internet search grounding via DuckDuckGo (`web_search`).
+- [x] IMAP email inbox reader with executive triage summaries.
+- [x] Groq Whisper voice note transcription for incoming audio memos.
+- [x] Multimodal document and syllabus analyzer for PDFs and images.
 
-## Phase 3 — Confirm-first calendar write
-- [ ] On high-confidence extraction (hardcode an initial threshold, e.g. confidence ≥ 0.7 — tune later, don't guess once and leave it forever), push an Android notification with Yes / Edit / Ignore actions
-- [ ] "Yes" → write directly to `CalendarContract.Events`
-- [ ] "Edit" → open a minimal edit screen (title/date/time fields, pre-filled), then write on save
-- [ ] "Ignore" → mark the queue row as ignored, no further prompts for that item
-- [ ] Handle the backend-unreachable case: queue the candidate via WorkManager, retry later, don't drop it silently
+### Phase 3 — Next.js Control Plane & Outbound Policy Engine
+- [x] Single-owner Web Control Plane built with **Next.js 14+ (App Router)**, **TypeScript**, and **Tailwind CSS**.
+- [x] Streaming AI Chat using native **AG-UI Server-Sent Events (SSE)** with interactive tool invocation cards.
+- [x] **Outbound Policy Engine (ADR 0003):** Choke point verifying every outgoing message against autonomy rules.
+- [x] **3-Tier Autonomy System:** Tier 0 (Draft Only), Tier 1 (Supervised with 15-min token), Tier 2 (Autonomous with 8s delay).
+- [x] **Approvals Inbox (`/approvals`):** Human-in-the-loop review queue to approve, edit, or reject outbound drafts.
+- [x] **Zero-Credential Exposure Guarantee:** Fernet-encrypted vault (`argus_vault.db`) isolated from web UI and LLM queries.
+- [x] Automated localhost Caddy reverse proxy at `http://127.0.0.1:3000` with Tailscale remote access support.
 
-**Acceptance criteria:** end-to-end — send yourself a real meeting message, get a confirmation notification, tap Yes, see the event appear in your phone's calendar app.
+### Phase 4 — System 1 Engine & Multi-Model Resilience (Latest Release)
+- [x] **System 1 Zero-Token Decision Engine (`system_one.py`):** Non-autoregressive fast path executing tasks, reminders, expenses, status, and acknowledgments in **< 5ms** with **0 cloud tokens**.
+- [x] **Strict Offline Mode Toggle (`/offline`, `/online`, `/mode`):** Complete zero-token guard running 100% locally from SQLite; pauses cloud AI inference.
+- [x] **Multi-Model LLM Router (`llm_provider.py`):**
+  - Dynamic routing between Groq (low-latency dialogue) and Google Gemini (deep code, reasoning, long queries).
+  - Intra-provider failover: Groq primary model (`qwen/qwen3.8-27b`) automatically falls back to secondary (`openai/gpt-oss-20b`) on rate limits.
+  - Cross-provider failover: Seamless fallback between Groq and Gemini.
+- [x] **Strict Group Chat Isolation:** Enforced rule prohibiting autonomous replies in WhatsApp group chats.
+- [x] **Contact Substring Matching:** Resolves contact names and substring rules in policy checks.
+- [x] **Bulk Emergency Killswitch:** `/autopilot off for all` instantly silences all automated replies system-wide.
+- [x] Modern slash command engine (`/s`, `/status`, `/todo`, `/remind`, `/ledger`, `/mode`, `/help`).
 
-## Phase 4 — Auto-add tuning (only after Phases 1–3 have real usage, for at least a couple weeks)
-- [ ] Track actual accuracy: how often "Yes" was tapped unedited vs. "Edit" vs. "Ignore," per confidence bucket
-- [ ] Only if a confidence bucket shows consistently correct extraction, offer an opt-in setting: "auto-add events above X% confidence, still confirm below that"
-- [ ] Never remove the fallback to confirm-first
+---
 
-**Acceptance criteria:** you have real usage data before this phase starts, not a guess.
+## 🔮 Future Roadmap (Phase 5+)
+
+### Phase 5 — Edge AI & Local Inference
+- [ ] **Local Whisper STT:** Host `faster-whisper` or `whisper.cpp` locally on homelab GPU for zero-cloud voice transcription.
+- [ ] **Local LLM Tool Calling:** Extend local Ollama support with native function-calling for 100% offline agentic ReAct loops.
+- [ ] **Context Window Compression:** Automatic semantic summarization of long multi-turn conversations to reduce token consumption.
+
+### Phase 6 — Proactive Assistant Capabilities
+- [ ] **Calendar Conflict Detection:** Proactively alert when new message invites collide with existing calendar events.
+- [ ] **Smart Daily Executive Briefing:** Scheduled morning WhatsApp dispatch synthesizing unread VIP emails, pending tasks, today's schedule, and weather.
+- [ ] **Push Notification Bridge:** Direct push alerts to phone via Gotify / ntfy when human approval is required.

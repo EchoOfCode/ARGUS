@@ -1,92 +1,112 @@
-# ARGUS v2 — Build Walkthrough
+# ARGUS Developer Walkthrough & Verification Guide
 
-## What's Built
-
-Phase 1 of ARGUS v2 is fully scaffolded. Both the **WhatsApp Bridge** and **AI Brain** are complete and compiling. Here's what was created:
+> Operational verification, testing workflows, and local developer guide for ARGUS.
 
 ---
 
-### WhatsApp Bridge (`bridge/`)
-**7 TypeScript source files** — compiles with 0 errors
+## 🛠️ Repository Architecture
 
-| File | Role |
-|---|---|
-| [index.ts](file:///e:/ARGUS/bridge/src/index.ts) | Entry point — Baileys socket, QR auth, reconnection, message event listener |
-| [config.ts](file:///e:/ARGUS/bridge/src/config.ts) | Loads `.env` config (JID, brain URL, secrets, rate limits) |
-| [db.ts](file:///e:/ARGUS/bridge/src/db.ts) | SQLite database — tables for reminders, todos, message_log, pending_events |
-| [messageHandler.ts](file:///e:/ARGUS/bridge/src/messageHandler.ts) | Core router — self-chat commands, confirmation replies, passive event detection |
-| [selfChat.ts](file:///e:/ARGUS/bridge/src/selfChat.ts) | Command mode — help, todos, done/delete, AI-routed intents |
-| [replySender.ts](file:///e:/ARGUS/bridge/src/replySender.ts) | Rate-limited WhatsApp sender with formatted templates |
-| [brainClient.ts](file:///e:/ARGUS/bridge/src/brainClient.ts) | HTTP client for calling the AI Brain with auth headers |
-| [reminderWorker.ts](file:///e:/ARGUS/bridge/src/reminderWorker.ts) | Cron job (every 60s) — sends due reminders via WhatsApp |
+ARGUS is structured as a monorepo containing three core applications:
+
+| Path | Role | Technology |
+| :--- | :--- | :--- |
+| [`apps/bridge`](file:///e:/ARGUS/apps/bridge) | WhatsApp Gateway & Policy Dispatcher | Node.js 20+, TypeScript 5.7+, Baileys v6.7, better-sqlite3 |
+| [`apps/brain`](file:///e:/ARGUS/apps/brain) | AI Brain, System 1 Engine & ReAct Loop | Python 3.11+, FastAPI, Groq SDK, Gemini API, SQLite WAL |
+| [`apps/web`](file:///e:/ARGUS/apps/web) | Single-Owner Web Control Plane | Next.js 14+ (App Router), TypeScript, Tailwind CSS, AG-UI SSE |
+| [`deploy`](file:///e:/ARGUS/deploy) | Production Caddy & Docker configurations | Caddyfile, Docker Compose |
 
 ---
 
-### AI Brain Backend (`backend/`)
-**5 Python source files** — all imports verified
+## 🧪 Verification & Test Suites
 
-| File | Role |
-|---|---|
-| [main.py](file:///e:/ARGUS/backend/main.py) | FastAPI server — 5 AI endpoints + health check |
-| [models.py](file:///e:/ARGUS/backend/models.py) | Pydantic models for all request/response schemas |
-| [groq_client.py](file:///e:/ARGUS/backend/groq_client.py) | Groq SDK calls — event extraction, summarization, Q&A |
-| [intent_classifier.py](file:///e:/ARGUS/backend/intent_classifier.py) | Message intent detection (event/reminder/todo/question/summarize/none) |
-| [reminder_parser.py](file:///e:/ARGUS/backend/reminder_parser.py) | Natural language → datetime parsing for reminders |
+### 1. Brain Backend Test Suite (Python)
+The backend test suite covers System 1 fast paths, offline mode, multi-model router failovers, outbound policy evaluation, and database concurrency.
 
-**Endpoints:**
-- `POST /process-message` — Intent classification (with auto event extraction)
-- `POST /extract-event` — Calendar event extraction
-- `POST /parse-reminder` — Reminder NLP parsing
-- `POST /summarize` — Conversation summarization
-- `POST /ask` — General Q&A
-- `GET /health` — Health check
-
----
-
-### Android App (`android/`)
-Project scaffolded with correct dependencies (Room, Retrofit, WorkManager, Compose). Package updated to `com.yusuf.argus`, manifest configured with NotificationListenerService and permissions. Full implementation deferred to Phase 3.
-
----
-
-## Verification Results
-
-| Check | Status |
-|---|---|
-| Bridge TypeScript compilation (`tsc --noEmit`) | ✅ 0 errors |
-| Bridge npm dependencies installed | ✅ 139 packages |
-| Backend Python imports | ✅ All modules load |
-| Backend pip dependencies installed | ✅ fastapi, groq, etc. |
-
----
-
-## To Start Using ARGUS
-
-### Step 1: Configure secrets
 ```bash
-# Backend
-cp backend/.env.example backend/.env
-# Edit backend/.env — set GROQ_API_KEY and ARGUS_SECRET
-
-# Bridge
-cp bridge/.env.example bridge/.env
-# Edit bridge/.env — set MY_JID, ARGUS_SECRET (same value), AI_BRAIN_URL
+cd apps/brain
+pytest -v
 ```
 
-### Step 2: Start the AI Brain
+**Verified Test Coverage:**
+- `tests/test_system_one.py`: Validates System 1 zero-token execution, task CRUD, reminder parsing, ledger balance summaries, and online/offline toggling.
+- `tests/test_llm_provider.py`: Validates router classification, Groq intra-model fallback (`openai/gpt-oss-20b`), Gemini failover, and log redaction.
+- `tests/test_policy_engine.py`: Validates Tier 0, Tier 1, and Tier 2 outbound evaluations, contact name substring matching, and group chat isolation.
+- `tests/test_agent_core.py`: Validates multi-turn ReAct loops and native tool execution.
+
+### 2. Bridge Gateway Test Suite (Node.js)
 ```bash
-cd backend
-uvicorn main:app --reload
+cd apps/bridge
+npm test
 ```
 
-### Step 3: Start the WhatsApp Bridge
-```bash
-cd bridge
-npm run dev
-```
-Scan the QR code with WhatsApp → Linked Devices → Link a Device
+**Verified Test Coverage:**
+- Outbound policy dispatcher timeout safety and 1-on-1 DM gating.
+- Fast-path slash command parser (`/s`, `/todo`, `/remind`, `/mode`, `/autopilot`).
+- HMAC-SHA256 request signature verification.
 
-### Step 4: Test it
-- Send yourself a message: `help` → see the command list
-- Send: `remind me to call mom at 5pm` → reminder set
-- Send: `meeting with Rahul tomorrow at 3pm` → event detected, confirm with `yes`
-- Send: `what's the capital of France?` → AI answer
+---
+
+## 🚀 Running ARGUS Locally (Dev Mode)
+
+### Step 1: Environment Files
+Configure `.env` in each application directory:
+```bash
+cp apps/brain/.env.example apps/brain/.env
+cp apps/bridge/.env.example apps/bridge/.env
+```
+
+Set `ARGUS_SECRET` to an identical 32-byte hexadecimal string in both `.env` files:
+```bash
+# Generate secret:
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+In `apps/brain/.env`:
+- Provide `GROQ_API_KEY` (and optionally `GEMINI_API_KEY`).
+- Set `LLM_PROVIDER=router`.
+
+In `apps/bridge/.env`:
+- Set `MY_JID` to your WhatsApp phone number (e.g. `919876543210@s.whatsapp.net`).
+- Set `AI_BRAIN_URL=http://127.0.0.1:8000`.
+
+### Step 2: Start Services
+Using Makefile or scripts:
+```bash
+# Start all dev services
+make dev
+
+# Or launch independently:
+# Terminal 1 (Brain):
+cd apps/brain && uvicorn main:app --host 127.0.0.1 --port 8000
+
+# Terminal 2 (Bridge):
+cd apps/bridge && npm run dev
+
+# Terminal 3 (Web Control Plane):
+cd apps/web && npm run dev
+```
+
+---
+
+## 📱 Testing Features Inside WhatsApp
+
+After scanning the QR code in `apps/bridge`:
+
+1. **System 1 Zero-Token Commands:**
+   - Text: `/status` → Instant system status card (< 5ms, 0 tokens).
+   - Text: `add buy milk` → Creates task `[#1]`.
+   - Text: `/todos` → Lists pending tasks.
+   - Text: `done #1` → Marks task completed.
+   - Text: `remind me in 30 minutes to stretch` → Schedules reminder for current time + 30m.
+   - Text: `spent 50 on coffee` → Logs ₹50 expense.
+   - Text: `/ledger` → Displays monthly breakdown and active debts.
+
+2. **Operating Modes:**
+   - Text: `/offline` → Switches to 100% offline local-only mode (zero cloud tokens).
+   - Text: `/mode` → Shows current mode status.
+   - Text: `/online` → Re-enables Cloud AI reasoning alongside local fast-path.
+
+3. **Autopilot & Outbound Policy:**
+   - Text: `/autopilot on Alex` → Whitelists contact for auto-replies in 1-on-1 DMs.
+   - Text: `/autopilot off for all` → Emergency bulk disable of all autopilot rules.
+   - Text: `/killswitch on` → Instantly silences all outbound messages.

@@ -23,13 +23,17 @@
 **ARGUS** is an executive personal AI assistant that lives inside your own WhatsApp account. Designed as a self-hosted "second brain" and digital Chief of Staff, ARGUS reads your incoming chats, prioritizes emails, manages reminders, schedules events, tracks shared expenses, and transcribes voice notes.
 
 ### What ARGUS Does
+- **⚡ System 1 Zero-Token Engine:** Sub-5ms deterministic local execution for tasks, reminders, ledger records, status, and acknowledgments using 0 cloud tokens.
+- **📴 Offline Mode Guard:** Toggle full offline execution (`/offline`) running purely on local SQLite storage with zero external cloud calls.
+- **🔀 Multi-Model AI Router:** Dynamically routes between Groq (low-latency reasoning) and Google Gemini (deep code, long context, and analysis) with automatic intra-model and cross-provider failover.
 - **🧠 Second Brain:** Automatically stores, categorizes, and recalls personal notes, facts, and preferences.
+- **🛡️ Outbound Policy Engine & Autopilot (ADR 0003):** 3-tiered autonomy (Draft Only, Supervised, Autonomous) restricted exclusively to 1-on-1 DMs with human approval queues and emergency bulk killswitches (`/autopilot off for all`).
 - **💬 Group Catch-up:** Generates structured 3-tier summaries (Key Points, Links, Action Items) for active chats.
 - **📬 Email Triage (IMAP):** Checks unread inbox messages and performs executive deep-dive breakdowns.
 - **📅 Calendar Scheduling:** Generates 1-tap Google Calendar links from natural language or document dates.
 - **🎙️ Voice Note Transcription:** Transcribes WhatsApp voice memos using Groq Whisper.
 - **💸 Expense Ledger:** Tracks shared expenses, debts, and balances via conversational commands.
-- **📤 Message Drafter & Auto-Pilot:** Drafts polish messages for contacts and provides supervised or autonomous persona auto-replies.
+- **📤 Message Drafter:** Drafts polished messages for contacts and routes them through approval workflows.
 
 ---
 
@@ -204,8 +208,12 @@ make dev
 | Variable | Required | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `ARGUS_SECRET` | **Yes** | — | HMAC shared secret (min 32 chars, cannot be placeholder). |
+| `LLM_PROVIDER` | No | `groq` | Inference backend: `router` (dynamic Groq/Gemini routing), `groq`, `gemini`, `ollama`, `mock`. |
 | `GROQ_API_KEY` | **Yes** | — | API key from Groq Cloud Console. |
-| `GROQ_MODEL` | No | `llama-3.3-70b-versatile` | Primary reasoning model. |
+| `GROQ_MODEL` | No | `llama-3.3-70b-versatile` | Primary reasoning model (`qwen/qwen3.8-27b` supported). |
+| `GROQ_FALLBACK_MODEL` | No | `openai/gpt-oss-20b` | Intra-provider fallback model when primary hits rate limits. |
+| `GEMINI_API_KEY` | No | — | Google Gemini API key for coding, deep analysis, and failover. |
+| `GEMINI_MODEL` | No | `gemini-flash-lite-latest` | Model used for complex reasoning, code, and long queries. |
 | `EMAIL_USER` | No | — | Gmail address for IMAP inbox triage. |
 | `EMAIL_PASS` | No | — | Gmail 16-character App Password. |
 | `HOST` | No | `127.0.0.1` | Local bind address (bound to localhost for security). |
@@ -228,25 +236,40 @@ make dev
 
 *(All examples use synthetic demonstration data)*
 
-| Category | Example Command | What ARGUS Does |
-| :--- | :--- | :--- |
-| **🧠 Second Brain** | `remember office parking spot is B-12` | Categorizes and stores note into memory vault. |
-| | `where is my parking spot?` | Synthesizes instant answer from memory. |
-| | `memories` | Displays full categorized knowledge graph. |
-| | `forget parking` | Deletes outdated memory entries. |
-| **💬 Chat Catch-up** | `catchup Project Alpha` | Generates 3-tier summary of recent group discussion. |
-| | `summarize chat` | Summarizes most recent active conversation. |
-| **📬 Email Reader** | `read my emails` | Fetches unread email headers and senders. |
-| | `summarize email #1` | Deep executive breakdown of specific message. |
-| **📅 Calendar** | `schedule Project Sync tomorrow at 4pm` | Produces 1-tap Google Calendar event creation link. |
-| | `events` / `calendar` | Shows upcoming schedule from local database. |
-| **📝 Reminders** | `remind me to send budget report in 45 minutes` | Sends scheduled alert back into WhatsApp. |
-| | `todos` / `add buy printer ink` | Manages personal todo checklist. |
-| **💸 Split Ledger** | `paid 450 for lunch with Alex` | Logs shared expense entry. |
-| | `who owes me` / `expenses` | Shows net debt and balance breakdown. |
-| **🤖 Persona Auto-Pilot**| `autopilot on for Alex` | Automatically replies to contact in owner's writing style. |
-| | `autopilot off` | Disables auto-pilot responses. |
-| **🚫 Exemptions** | `exempt Family Group` | Stops message logging for spammy group chats. |
+| Category | Example Command / Slash Command | What ARGUS Does | Token Cost |
+| :--- | :--- | :--- | :--- |
+| **⚡ System 1 & Modes** | `/offline` or `offline mode` | Enables strict offline mode (runs 100% locally on PC; pauses cloud AI). | **0 tokens** |
+| | `/online` or `online mode` | Re-enables Cloud AI reasoning alongside local fast-path. | **0 tokens** |
+| | `/mode` | Displays current active operating mode (Online vs Offline). | **0 tokens** |
+| | `/status` or `/s` | Instant telemetry: health, pending tasks/reminders, killswitch state. | **0 tokens** |
+| | `clean up` / `reset` | Wipes active conversational working buffer and refreshes state. | **0 tokens** |
+| **📝 Tasks & Todos** | `/todo` or `todos` | Lists pending tasks with IDs. | **0 tokens** |
+| | `add buy milk` or `/todo add buy milk` | Creates a new task in SQLite. | **0 tokens** |
+| | `done #1` or `complete buy milk` | Marks task #1 completed. | **0 tokens** |
+| | `delete #1` | Deletes task #1. | **0 tokens** |
+| **⏰ Reminders** | `remind me in 45 minutes to submit report` | Schedules reminder using local NLP time parser. | **0 tokens** |
+| | `remind me tomorrow morning to call doctor` | Schedules reminder for tomorrow morning (10:00 AM). | **0 tokens** |
+| | `/reminders` | Displays all upcoming scheduled reminders. | **0 tokens** |
+| | `cancel reminder #2` | Cancels scheduled reminder #2. | **0 tokens** |
+| **💸 Financial Ledger** | `spent 50 on coffee` | Logs expense of ₹50 under "coffee" category. | **0 tokens** |
+| | `paid 450 for lunch with Alex` | Logs shared expense with contact. | **0 tokens** |
+| | `/ledger` or `expenses` / `debts` | Aggregates monthly spend, all-time total, and unsettled debts. | **0 tokens** |
+| **🤖 Autopilot & Outbound** | `/autopilot on Alex` | Enables auto-replies for contact in 1-on-1 DM (never in groups). | Cloud AI |
+| | `/autopilot off Alex` | Disables auto-replies for contact. | **0 tokens** |
+| | `/autopilot off for all` | **Bulk Emergency Killswitch:** Disables auto-reply for all contacts. | **0 tokens** |
+| | `/killswitch on` / `/killswitch off` | Global master silence switch (pauses all outgoing actions). | **0 tokens** |
+| | `/approve 4` / `/reject 4` | Approves or discards queued outbound draft #4. | **0 tokens** |
+| **🧠 Second Brain** | `remember office parking spot is B-12` | Categorizes and stores note into memory vault. | Cloud AI |
+| | `where is my parking spot?` | Synthesizes instant answer from memory vault. | Cloud AI |
+| | `memories` | Displays categorized knowledge graph. | Cloud AI |
+| | `forget parking` | Deletes outdated memory entries. | Cloud AI |
+| **💬 Chat Catch-up** | `catchup Project Alpha` | Generates 3-tier summary of recent group discussion. | Cloud AI |
+| | `summarize chat` | Summarizes most recent active conversation. | Cloud AI |
+| **📬 Email Reader** | `read my emails` | Fetches unread email headers and senders via IMAP. | Cloud AI |
+| | `summarize email #1` | Deep executive breakdown of specific message. | Cloud AI |
+| **📅 Calendar** | `schedule Project Sync tomorrow at 4pm` | Produces 1-tap Google Calendar event creation link. | Cloud AI |
+| | `events` / `calendar` | Shows upcoming schedule from local database. | **0 tokens** |
+| **🚫 Exemptions** | `exempt Family Group` | Stops message logging for spammy group chats. | **0 tokens** |
 
 ---
 
