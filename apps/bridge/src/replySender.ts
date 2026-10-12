@@ -22,7 +22,8 @@ async function rateLimitedSend(
   jid: string,
   content: { text: string },
   config: Config,
-  triggerType: "owner_command" | "autopilot_reply" | "reminder_alert" = "owner_command"
+  triggerType: "owner_command" | "autopilot_reply" | "reminder_alert" = "owner_command",
+  senderName?: string
 ): Promise<boolean> {
   const now = Date.now();
   const elapsed = now - lastSendTime;
@@ -35,6 +36,7 @@ async function rateLimitedSend(
   const result = await dispatchOutboundMessage(sock, config, jid, content, {
     triggerType,
     isGroup: jid.endsWith("@g.us"),
+    senderName,
   });
 
   if (result.sent) {
@@ -53,9 +55,10 @@ export async function sendText(
   jid: string,
   text: string,
   config: Config,
-  triggerType: "owner_command" | "autopilot_reply" | "reminder_alert" = "owner_command"
+  triggerType: "owner_command" | "autopilot_reply" | "reminder_alert" = "owner_command",
+  senderName?: string
 ): Promise<boolean> {
-  return await rateLimitedSend(sock, jid, { text }, config, triggerType);
+  return await rateLimitedSend(sock, jid, { text }, config, triggerType, senderName);
 }
 
 export async function sendEventConfirmation(

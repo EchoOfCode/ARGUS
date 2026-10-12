@@ -40,6 +40,7 @@ export function isBridgeOriginatedMessage(messageId: string): boolean {
 export interface DispatchOptions {
   triggerType: "owner_command" | "autopilot_reply" | "reminder_alert";
   isGroup?: boolean;
+  senderName?: string;
   onUndoScheduled?: (cancelFn: () => void, delaySeconds: number) => void;
 }
 
@@ -65,9 +66,9 @@ export async function dispatchOutboundMessage(
   const messageText = typeof content === "object" && "text" in content ? (content.text as string) : "[Media/Card]";
   const isGroup = options.isGroup ?? targetJid.endsWith("@g.us");
 
-  logger.info({ targetJid, trigger: options.triggerType, isGroup }, "Evaluating outbound policy for message");
+  logger.info({ targetJid, trigger: options.triggerType, isGroup, senderName: options.senderName }, "Evaluating outbound policy for message");
 
-  // 1. Evaluate policy with 3000ms strict timeout (Fail-Closed)
+  // 1. Evaluate policy with 10000ms strict timeout (Fail-Closed)
   let policyVerdict: any;
   try {
     const policyPromise = callBrain(config, "/api/policy/evaluate", {
@@ -75,6 +76,7 @@ export async function dispatchOutboundMessage(
       message_text: messageText,
       trigger_type: options.triggerType,
       is_group: isGroup,
+      sender_name: options.senderName,
     });
 
     const timeoutPromise = new Promise((_, reject) =>

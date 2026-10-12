@@ -503,7 +503,14 @@ export async function handleMessage(
 
               // 1. Send natural buffer reply to contact
               const bufferReply = proposalRes.buffer_reply || "give me a sec, checking my schedule and will text u back 👍";
-              const bufferSent = await sendText(sock, chatJid, bufferReply, config);
+              const bufferSent = await sendText(
+                sock,
+                chatJid,
+                bufferReply,
+                config,
+                "autopilot_reply",
+                senderName || autopilotRule.name
+              );
               if (bufferSent) {
                 incrementAutopilotCount(autopilotRule.jid, config);
               }
@@ -572,7 +579,14 @@ export async function handleMessage(
 
           if (personaRes && personaRes.reply_text) {
             // 6. Send response directly to the 1-on-1 contact
-            const wasDispatched = await sendText(sock, chatJid, personaRes.reply_text, config, "autopilot_reply");
+            const wasDispatched = await sendText(
+              sock,
+              chatJid,
+              personaRes.reply_text,
+              config,
+              "autopilot_reply",
+              senderName || autopilotRule.name
+            );
             if (!wasDispatched) {
               console.log(`🛡️ [Auto-Pilot] Reply blocked by policy engine for [${chatJid}]. Skipping mirror card.`);
               return;
