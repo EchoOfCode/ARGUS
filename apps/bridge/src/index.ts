@@ -92,10 +92,10 @@ async function connectToWhatsApp(): Promise<void> {
   // Create the socket
   sock = makeWASocket({
     version,
-    logger: pino({ level: "silent" }) as any, // Silence internal Baileys logs
+    logger: pino({ level: "info" }) as any, // Baileys internal logs enabled for diagnostics
     auth: {
       creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }) as any),
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "warn" }) as any),
     },
     browser: Browsers.windows("Desktop"),
     msgRetryCounterCache,
@@ -194,6 +194,21 @@ async function connectToWhatsApp(): Promise<void> {
         }
       } catch (err) {
         logger.warn({ err }, "Could not auto-fetch group directory");
+      }
+
+      // Log metadata and participants of command group
+      if (config.commandGroupJid) {
+        try {
+          const cmdGroupMeta = await sock!.groupMetadata(config.commandGroupJid);
+          logger.info({
+            groupJid: config.commandGroupJid,
+            subject: cmdGroupMeta.subject,
+            participantsCount: cmdGroupMeta.participants?.length,
+            participants: cmdGroupMeta.participants?.map((p: any) => p.id),
+          }, "Command Group Metadata & Participants");
+        } catch (cgErr: any) {
+          logger.warn({ error: cgErr.message, commandGroupJid: config.commandGroupJid }, "Could not fetch command group metadata");
+        }
       }
 
       // Sync active autopilot rules from Brain central database (ADR 0001)
@@ -310,6 +325,14 @@ async function connectToWhatsApp(): Promise<void> {
         logger.error({ err, key: msg.key }, "Error handling message");
       }
     }
+  });
+
+  sock.ev.on("messages.update", (updates) => {
+    logger.debug({ count: updates.length }, "messages.update event");
+  });
+
+  sock.ev.on("message-receipt.update", (receipts) => {
+    logger.debug({ count: receipts.length }, "message-receipt.update event");
   });
 }
 
