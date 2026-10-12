@@ -31,6 +31,7 @@ import { handleSelfChatMessage } from "./selfChat.js";
 import { callBrain, callBrainMultipart } from "./brainClient.js";
 import { isAuthorizedCommandTurn, isCommandChannel, getOwnerLid } from "./authority.js";
 import { isBridgeOriginatedMessage } from "./policy/dispatcher.js";
+import { recordLidMapping, resolveLidToPhoneJid } from "./lidResolver.js";
 
 const logger = pino({ name: "argus:handler" });
 
@@ -219,6 +220,12 @@ export async function handleMessage(
   const chatJid = msg.key.remoteJid;
   if (!chatJid) return;
   const isGroup = chatJid.endsWith("@g.us");
+
+  const rawKey = msg.key as any;
+  const senderPn = rawKey?.senderPn || rawKey?.participantPn;
+  if (senderPn && chatJid.endsWith("@lid")) {
+    recordLidMapping(chatJid, senderPn, getSenderName(msg) || undefined);
+  }
 
   const isFromMe = msg.key.fromMe || false;
   const senderJid = isFromMe ? config.myJid : msg.key.participant || chatJid;
@@ -501,11 +508,12 @@ export async function handleMessage(
             if (proposalRes && proposalRes.is_proposal && proposalRes.confidence >= 0.6) {
               console.log(`🤝 [Meeting Proposal Detected] from ${senderName || chatJid}: "${proposalRes.title}"`);
 
-              // 1. Send natural buffer reply to contact
+              // 1. Send natural buffer reply to contact (resolve to standard phone JID if @lid)
+              const resolvedBufferJid = resolveLidToPhoneJid(chatJid, senderName || autopilotRule.name) || chatJid;
               const bufferReply = proposalRes.buffer_reply || "give me a sec, checking my schedule and will text u back 👍";
               const bufferSent = await sendText(
                 sock,
-                chatJid,
+                resolvedBufferJid,
                 bufferReply,
                 config,
                 "autopilot_reply",
@@ -578,17 +586,18 @@ export async function handleMessage(
           }
 
           if (personaRes && personaRes.reply_text) {
-            // 6. Send response directly to the 1-on-1 contact
+            // 6. Send response directly to the 1-on-1 contact (resolve to standard phone JID if @lid)
+            const resolvedTargetJid = resolveLidToPhoneJid(chatJid, senderName || autopilotRule.name) || chatJid;
             const wasDispatched = await sendText(
               sock,
-              chatJid,
+              resolvedTargetJid,
               personaRes.reply_text,
               config,
               "autopilot_reply",
               senderName || autopilotRule.name
             );
             if (!wasDispatched) {
-              console.log(`🛡️ [Auto-Pilot] Reply blocked by policy engine for [${chatJid}]. Skipping mirror card.`);
+              console.log(`🛡️ [Auto-Pilot] Reply blocked by policy engine for [${resolvedTargetJid}]. Skipping mirror card.`);
               return;
             }
 

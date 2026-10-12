@@ -274,6 +274,22 @@ async def sync_contacts_endpoint(
         return {"success": True, "count": synced_count}
 
 
+@bridge_router.get("/contacts")
+async def get_contacts_endpoint(
+    request: Request,
+    x_argus_signature: Optional[str] = Header(None),
+    x_argus_timestamp: Optional[str] = Header(None),
+    x_argus_secret: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Fetch all contacts from central directory for bridge routing."""
+    await _authenticate_request(request, x_argus_signature, x_argus_timestamp, x_argus_secret)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT jid, name, is_group FROM chat_directory")
+        contacts = [dict(r) for r in cursor.fetchall()]
+    return {"success": True, "contacts": contacts}
+
+
 # ─── AUTOPILOT RULES ───────────────────────────────────────
 
 @bridge_router.get("/autopilot/rules")
@@ -599,11 +615,11 @@ async def policy_evaluate_endpoint(
                 (data.target_jid,),
             )
             count_contact = cursor.fetchone()["cnt"]
-            if count_contact >= 3:
+            if count_contact >= 10:
                 log_audit_here("rejected", 0, "Per-contact rate limit exceeded")
-                return {"verdict": "rejected", "reason": "Contact rate limit exceeded (max 3 per 10m)", "tier": 0}
+                return {"verdict": "rejected", "reason": "Contact rate limit exceeded (max 10 per 10m)", "tier": 0}
 
-            # 4. Loop Detection: Check if contact and assistant alternated >= 3 times in 2 minutes
+            # 4. Loop Detection: Check if contact and assistant alternated >= 6 times in 2 minutes
             cursor.execute(
                 """
                 SELECT COUNT(*) as cnt FROM outbound_audit_log
@@ -612,7 +628,7 @@ async def policy_evaluate_endpoint(
                 (data.target_jid,),
             )
             recent_exchanges = cursor.fetchone()["cnt"]
-            if recent_exchanges >= 3:
+            if recent_exchanges >= 6:
                 # Quarantine to Tier 0
                 cursor.execute(
                     "UPDATE autopilot_rules SET tier = 0, status = 'quarantined' WHERE jid = ?",

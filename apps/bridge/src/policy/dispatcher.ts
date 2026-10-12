@@ -8,6 +8,7 @@ import { WASocket, AnyMessageContent } from "@whiskeysockets/baileys";
 import pino from "pino";
 import { Config } from "../config.js";
 import { callBrain } from "../brainClient.js";
+import { resolveLidToPhoneJid } from "../lidResolver.js";
 
 const logger = pino({ name: "argus:policy:dispatcher" });
 
@@ -63,16 +64,27 @@ export async function dispatchOutboundMessage(
   content: AnyMessageContent,
   options: DispatchOptions
 ): Promise<DispatchResult> {
-  const messageText = typeof content === "object" && "text" in content ? (content.text as string) : "[Media/Card]";
-  const isGroup = options.isGroup ?? targetJid.endsWith("@g.us");
+  // If targetJid is an @lid, resolve to the contact's standard phone JID (@s.whatsapp.net)
+  // to ensure reliable delivery and synchronization across WhatsApp multi-device clients.
+  let effectiveJid = targetJid;
+  if (effectiveJid.endsWith("@lid")) {
+    const resolvedPn = resolveLidToPhoneJid(effectiveJid, options.senderName);
+    if (resolvedPn) {
+      logger.info({ originalLid: effectiveJid, resolvedPhoneJid: resolvedPn }, "Resolved outbound @lid to standard phone JID (@s.whatsapp.net)");
+      effectiveJid = resolvedPn;
+    }
+  }
 
-  logger.info({ targetJid, trigger: options.triggerType, isGroup, senderName: options.senderName }, "Evaluating outbound policy for message");
+  const messageText = typeof content === "object" && "text" in content ? (content.text as string) : "[Media/Card]";
+  const isGroup = options.isGroup ?? effectiveJid.endsWith("@g.us");
+
+  logger.info({ targetJid: effectiveJid, originalJid: targetJid, trigger: options.triggerType, isGroup, senderName: options.senderName }, "Evaluating outbound policy for message");
 
   // 1. Evaluate policy with 10000ms strict timeout (Fail-Closed)
   let policyVerdict: any;
   try {
     const policyPromise = callBrain(config, "/api/policy/evaluate", {
-      target_jid: targetJid,
+      target_jid: effectiveJid,
       message_text: messageText,
       trigger_type: options.triggerType,
       is_group: isGroup,
@@ -86,7 +98,7 @@ export async function dispatchOutboundMessage(
     policyVerdict = await Promise.race([policyPromise, timeoutPromise]);
   } catch (err: any) {
     // FAIL CLOSED: If brain is unreachable or times out, never send
-    logger.error({ error: err.message, targetJid }, "Outbound policy evaluation failed; FAILING CLOSED (0 bytes sent)");
+    logger.error({ error: err.message, targetJid: effectiveJid }, "Outbound policy evaluation failed; FAILING CLOSED (0 bytes sent)");
     return {
       sent: false,
       reason: `Policy check failed: ${err.message}. Failed closed.`,
@@ -95,12 +107,12 @@ export async function dispatchOutboundMessage(
 
   // 2. Process Policy Verdict
   if (policyVerdict.verdict === "rejected") {
-    logger.warn({ targetJid, reason: policyVerdict.reason }, "Outbound message rejected by policy");
+    logger.warn({ targetJid: effectiveJid, reason: policyVerdict.reason }, "Outbound message rejected by policy");
     return { sent: false, reason: policyVerdict.reason };
   }
 
   if (policyVerdict.verdict === "requires_approval") {
-    logger.info({ targetJid, approvalId: policyVerdict.approval_id }, "Outbound message requires owner approval (Tier 1)");
+    logger.info({ targetJid: effectiveJid, approvalId: policyVerdict.approval_id }, "Outbound message requires owner approval (Tier 1)");
     return {
       sent: false,
       requiresApproval: true,
@@ -110,7 +122,7 @@ export async function dispatchOutboundMessage(
   }
 
   if (policyVerdict.verdict === "draft_only") {
-    logger.info({ targetJid }, "Outbound message classified as Draft Only (Tier 0)");
+    logger.info({ targetJid: effectiveJid }, "Outbound message classified as Draft Only (Tier 0)");
     return {
       sent: false,
       reason: policyVerdict.reason || "Draft Only (Tier 0)",
@@ -121,11 +133,11 @@ export async function dispatchOutboundMessage(
   if (policyVerdict.verdict === "approved") {
     const undoDelayS = policyVerdict.undo_delay_s || 0;
     if (undoDelayS > 0) {
-      logger.info({ targetJid, undoDelayS }, "Holding message in undo window before dispatch");
+      logger.info({ targetJid: effectiveJid, undoDelayS }, "Holding message in undo window before dispatch");
       let cancelled = false;
       const cancelFn = () => {
         cancelled = true;
-        logger.info({ targetJid }, "Message send cancelled by user during undo window");
+        logger.info({ targetJid: effectiveJid }, "Message send cancelled by user during undo window");
       };
 
       if (options.onUndoScheduled) {
@@ -140,17 +152,17 @@ export async function dispatchOutboundMessage(
 
     // 4. Sole point of execution calling sock.sendMessage()
     try {
-      const result = await sock.sendMessage(targetJid, content);
+      const result = await sock.sendMessage(effectiveJid, content);
       if (result?.key?.id) {
         recordSentMessageId(result.key.id);
       }
-      logger.info({ targetJid, messageId: result?.key?.id }, "Successfully dispatched outbound message to WhatsApp");
+      logger.info({ targetJid: effectiveJid, messageId: result?.key?.id }, "Successfully dispatched outbound message to WhatsApp");
       return {
         sent: true,
         messageId: result?.key?.id || undefined,
       };
     } catch (err: any) {
-      logger.error({ targetJid, error: err.message }, "Failed to send message via Baileys socket");
+      logger.error({ targetJid: effectiveJid, error: err.message }, "Failed to send message via Baileys socket");
       throw err;
     }
   }

@@ -48,7 +48,7 @@ import { deriveOwnerIdentity } from "./authority.js";
 import { callBrain } from "./brainClient.js";
 import { handleMessage } from "./messageHandler.js";
 import { startReminderWorker } from "./reminderWorker.js";
-import { syncAutopilotRulesFromBrain } from "./db.js";
+import { syncAutopilotRulesFromBrain, saveChatDirectory } from "./db.js";
 
 const logger = pino({ level: "info", name: "argus:bridge" });
 
@@ -216,6 +216,21 @@ async function connectToWhatsApp(): Promise<void> {
         await syncAutopilotRulesFromBrain(config);
       } catch (err) {
         logger.warn({ err }, "Could not initial-sync autopilot rules from Brain");
+      }
+
+      // Sync known contacts from Brain directory into bridge memory (ADR 0001)
+      try {
+        const contactsRes = await callBrain(config, "/api/contacts", {}, "GET");
+        if (contactsRes?.contacts && Array.isArray(contactsRes.contacts)) {
+          for (const c of contactsRes.contacts) {
+            if (c.jid && c.name) {
+              saveChatDirectory(c.jid, c.name, Boolean(c.is_group));
+            }
+          }
+          logger.info({ count: contactsRes.contacts.length }, "Loaded known contacts from Brain directory");
+        }
+      } catch (err) {
+        logger.warn({ err }, "Could not sync contacts from Brain");
       }
 
       // Start the reminder cron worker
