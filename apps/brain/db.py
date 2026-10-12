@@ -41,13 +41,13 @@ def get_sqlite_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
     target_path = db_path or resolve_db_path()
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
-    conn = sqlite3.connect(target_path, timeout=5.0)
+    conn = sqlite3.connect(target_path, timeout=15.0)
     conn.row_factory = sqlite3.Row
 
     # Apply strict SQLite performance and concurrency pragmas (ADR 0001)
     cursor = conn.cursor()
     cursor.execute("PRAGMA journal_mode = WAL;")
-    cursor.execute("PRAGMA busy_timeout = 5000;")
+    cursor.execute("PRAGMA busy_timeout = 15000;")
     cursor.execute("PRAGMA foreign_keys = ON;")
     cursor.execute("PRAGMA synchronous = NORMAL;")
     cursor.close()

@@ -551,20 +551,31 @@ async def policy_evaluate_endpoint(
 
     content_hash = _hash_content(data.message_text)
 
-    # 1. Check Global Emergency Killswitch
     with get_db() as conn:
         cursor = conn.cursor()
+
+        def log_audit_here(verdict: str, tier_val: int = 0, reason: Optional[str] = None):
+            try:
+                lat = int((time.time() - start_time) * 1000)
+                cursor.execute(
+                    """
+                    INSERT INTO outbound_audit_log (target_jid, trigger_type, tier, content_sha256, latency_ms, verdict, rejection_reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (data.target_jid, data.trigger_type, tier_val, content_hash, lat, verdict, reason),
+                )
+            except Exception as e:
+                logger.error("Failed to append to audit log: %s", e)
+
+        # 1. Check Global Emergency Killswitch
         cursor.execute("SELECT status FROM autopilot_rules WHERE jid = 'GLOBAL_KILLSWITCH'")
         killswitch_row = cursor.fetchone()
         if killswitch_row and killswitch_row["status"] == "active":
-            latency = int((time.time() - start_time) * 1000)
-            _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "rejected", "Global killswitch active")
+            log_audit_here("rejected", 0, "Global killswitch active")
             return {"verdict": "rejected", "reason": "Global emergency killswitch is active", "tier": 0}
 
-    # 2. Check Global Hourly Cap (max 10 autonomous messages/hour)
-    if data.trigger_type == "autopilot_reply":
-        with get_db() as conn:
-            cursor = conn.cursor()
+        # 2. Check Global Hourly Cap (max 10 autonomous messages/hour)
+        if data.trigger_type == "autopilot_reply":
             cursor.execute(
                 """
                 SELECT COUNT(*) as cnt FROM outbound_audit_log
@@ -574,14 +585,10 @@ async def policy_evaluate_endpoint(
             )
             count_hour = cursor.fetchone()["cnt"]
             if count_hour >= 10:
-                latency = int((time.time() - start_time) * 1000)
-                _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "rejected", "Global hourly cap reached")
+                log_audit_here("rejected", 0, "Global hourly cap reached")
                 return {"verdict": "rejected", "reason": "Global hourly autonomous cap reached (10/hr)", "tier": 0}
 
-    # 3. Check Per-Contact Rate Limit (max 3 autonomous messages / 10 min)
-    if data.trigger_type == "autopilot_reply":
-        with get_db() as conn:
-            cursor = conn.cursor()
+            # 3. Check Per-Contact Rate Limit (max 3 autonomous messages / 10 min)
             cursor.execute(
                 """
                 SELECT COUNT(*) as cnt FROM outbound_audit_log
@@ -592,14 +599,10 @@ async def policy_evaluate_endpoint(
             )
             count_contact = cursor.fetchone()["cnt"]
             if count_contact >= 3:
-                latency = int((time.time() - start_time) * 1000)
-                _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "rejected", "Per-contact rate limit exceeded")
+                log_audit_here("rejected", 0, "Per-contact rate limit exceeded")
                 return {"verdict": "rejected", "reason": "Contact rate limit exceeded (max 3 per 10m)", "tier": 0}
 
-    # 4. Loop Detection: Check if contact and assistant alternated >= 3 times in 2 minutes
-    if data.trigger_type == "autopilot_reply":
-        with get_db() as conn:
-            cursor = conn.cursor()
+            # 4. Loop Detection: Check if contact and assistant alternated >= 3 times in 2 minutes
             cursor.execute(
                 """
                 SELECT COUNT(*) as cnt FROM outbound_audit_log
@@ -614,30 +617,25 @@ async def policy_evaluate_endpoint(
                     "UPDATE autopilot_rules SET tier = 0, status = 'quarantined' WHERE jid = ?",
                     (data.target_jid,),
                 )
-                latency = int((time.time() - start_time) * 1000)
-                _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "rejected", "Loop detected; contact quarantined to Tier 0")
+                log_audit_here("rejected", 0, "Loop detected; contact quarantined to Tier 0")
                 return {"verdict": "rejected", "reason": "Conversational loop detected; quarantined to Tier 0", "tier": 0}
 
-    # 5. Handle Owner-Initiated Send
-    if data.trigger_type in ["owner_command", "reminder_alert"]:
-        latency = int((time.time() - start_time) * 1000)
-        _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "approved", None)
-        return {"verdict": "approved", "tier": 0, "undo_delay_s": 0}
+        # 5. Handle Owner-Initiated Send
+        if data.trigger_type in ["owner_command", "reminder_alert"]:
+            log_audit_here("approved", 0, None)
+            return {"verdict": "approved", "tier": 0, "undo_delay_s": 0}
 
-    # 6. Handle Assistant-Initiated Reply (Evaluate Tiers)
-    # Tier 2 is prohibited in group chats in v1
-    if data.is_group:
-        latency = int((time.time() - start_time) * 1000)
-        _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "draft_only", "Group chats restricted to Tier 0")
-        return {"verdict": "draft_only", "reason": "Group autonomous replies prohibited in v1", "tier": 0}
+        # 6. Handle Assistant-Initiated Reply (Evaluate Tiers)
+        # Tier 2 is prohibited in group chats in v1
+        if data.is_group:
+            log_audit_here("draft_only", 0, "Group chats restricted to Tier 0")
+            return {"verdict": "draft_only", "reason": "Group autonomous replies prohibited in v1", "tier": 0}
 
-    # Fetch rule for contact
-    with get_db() as conn:
-        cursor = conn.cursor()
-        from db import get_kill_switch_status
-        if get_kill_switch_status():
-            latency = int((time.time() - start_time) * 1000)
-            _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "kill_switch_engaged", "Global kill switch active")
+        # Check system_settings kill switch directly without opening a nested DB context
+        cursor.execute("SELECT value FROM system_settings WHERE key = 'kill_switch'")
+        ks_setting = cursor.fetchone()
+        if ks_setting and ks_setting["value"] == "1":
+            log_audit_here("kill_switch_engaged", 0, "Global kill switch active")
             return {"verdict": "draft_only", "reason": "Global autonomy kill switch is engaged", "tier": 0}
 
         # 1. Direct rule match by JID
@@ -670,8 +668,7 @@ async def policy_evaluate_endpoint(
         tier = rule["tier"] if rule and rule["status"] == "active" else 0
 
         if tier == 2:
-            latency = int((time.time() - start_time) * 1000)
-            _log_audit(data.target_jid, data.trigger_type, 2, content_hash, latency, "approved", None)
+            log_audit_here("approved", 2, None)
             return {"verdict": "approved", "tier": 2, "undo_delay_s": 8}
 
         if tier == 1:
@@ -684,8 +681,7 @@ async def policy_evaluate_endpoint(
                 """,
                 (approval_id, data.target_jid, data.message_text, content_hash, data.trigger_type),
             )
-            latency = int((time.time() - start_time) * 1000)
-            _log_audit(data.target_jid, data.trigger_type, 1, content_hash, latency, "requires_approval", None)
+            log_audit_here("requires_approval", 1, None)
             return {
                 "verdict": "requires_approval",
                 "tier": 1,
@@ -703,8 +699,7 @@ async def policy_evaluate_endpoint(
             """,
             (draft_id, data.target_jid, data.message_text, content_hash, data.trigger_type),
         )
-        latency = int((time.time() - start_time) * 1000)
-        _log_audit(data.target_jid, data.trigger_type, 0, content_hash, latency, "draft_only", "Default Tier 0")
+        log_audit_here("draft_only", 0, "Default Tier 0")
         return {
             "verdict": "draft_only",
             "reason": "Contact is configured as Tier 0 (Draft Only)",

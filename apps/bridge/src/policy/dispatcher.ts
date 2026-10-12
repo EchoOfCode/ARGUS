@@ -78,7 +78,7 @@ export async function dispatchOutboundMessage(
     });
 
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Policy evaluation timed out (> 3000ms)")), 3000)
+      setTimeout(() => reject(new Error("Policy evaluation timed out (> 10000ms)")), 10000)
     );
 
     policyVerdict = await Promise.race([policyPromise, timeoutPromise]);
