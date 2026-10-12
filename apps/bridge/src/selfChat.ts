@@ -2247,8 +2247,17 @@ async function handleEnableAutopilot(sock: WASocket, chatJid: string, raw: strin
 }
 
 async function handleDisableAutopilot(sock: WASocket, chatJid: string, raw: string, config: Config): Promise<void> {
-  const clean = raw.trim();
-  if (!clean || clean.toLowerCase() === "all" || clean.toLowerCase() === "global" || clean.toLowerCase() === "off") {
+  const clean = raw.trim().toLowerCase();
+  if (
+    !clean ||
+    clean === "all" ||
+    clean === "for all" ||
+    clean === "off all" ||
+    clean === "off for all" ||
+    clean === "global" ||
+    clean === "off" ||
+    clean === "everyone"
+  ) {
     disableAllAutopilot(config);
     await sendText(sock, chatJid, "🛑 *Auto-Pilot disabled for all contacts & global mode.*", config);
     return;
@@ -2264,7 +2273,7 @@ async function handleDisableAutopilot(sock: WASocket, chatJid: string, raw: stri
     await sendText(sock, chatJid, `🛑 *Auto-Pilot disabled for ${targetName}.*`, config);
   } else {
     disableAllAutopilot(config);
-    await sendText(sock, chatJid, `🛑 *Auto-Pilot disabled.*`, config);
+    await sendText(sock, chatJid, "🛑 *Auto-Pilot disabled for all contacts & global mode.*", config);
   }
 }
 

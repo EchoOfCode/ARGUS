@@ -359,6 +359,30 @@ async def toggle_autopilot_endpoint(
 
     with get_db() as conn:
         cursor = conn.cursor()
+
+        # 1. Bulk disable all rules system-wide
+        if jid in ["ALL", "all", "GLOBAL_ALL"] or (jid == "GLOBAL" and status == "disabled"):
+            cursor.execute("UPDATE autopilot_rules SET status = 'disabled', tier = 0")
+            cursor.execute("UPDATE system_settings SET value = '0' WHERE key = 'autopilot_global'")
+            logger.info("Disabled all autopilot rules system-wide in central database")
+            return {"success": True, "jid": "ALL", "status": "disabled", "tier": 0}
+
+        # 2. If disabling an individual contact, also update any matching rows by contact name
+        if status == "disabled":
+            cursor.execute(
+                """
+                UPDATE autopilot_rules 
+                SET status = 'disabled', tier = 0 
+                WHERE jid = ? OR LOWER(name) = LOWER(?) OR LOWER(name) LIKE ?
+                """,
+                (jid, jid, f"%{jid.lower()}%"),
+            )
+            # If a row was matched and updated, return success
+            if cursor.rowcount > 0:
+                logger.info("Disabled autopilot rule for %s (matched %d rows)", jid, cursor.rowcount)
+                return {"success": True, "jid": jid, "status": "disabled", "tier": 0}
+
+        # 3. Standard single contact upsert
         cursor.execute(
             """
             INSERT INTO autopilot_rules (jid, name, status, tier, custom_prompt, created_at)

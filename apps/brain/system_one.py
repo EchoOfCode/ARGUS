@@ -176,6 +176,24 @@ class SystemOneEngine:
                 f"_Switch anytime with */offline* or */online*._"
             )
 
+        # ─── 2C. AUTOPILOT EMERGENCY DISABLE (ZERO TOKENS) ───────────
+        if lower in [
+            "/autopilot off", "autopilot off", "/autopilot off all", "autopilot off all",
+            "/autopilot off for all", "autopilot off for all", "disable autopilot", "stop autopilot"
+        ]:
+            from db import get_db
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE autopilot_rules SET status = 'disabled', tier = 0")
+                cursor.execute("UPDATE system_settings SET value = '0' WHERE key = 'autopilot_global'")
+            logger.info("[SYSTEM 1] Fast-path executed: All autopilot rules disabled (0 tokens)")
+            return (
+                "🛑 *Auto-Pilot Disabled for ALL Contacts*\n\n"
+                "• All autonomous replies are stopped system-wide.\n"
+                "• All contacts set to Tier 0 (Draft Only).\n\n"
+                "_Turn on anytime with */autopilot on [Name]* or */autopilot on*._"
+            )
+
         # ─── 3. TODO & TASK ACTIONS ──────────────────────────────────
         # 3A. List Tasks
         if (

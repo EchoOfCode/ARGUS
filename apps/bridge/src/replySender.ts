@@ -23,7 +23,7 @@ async function rateLimitedSend(
   content: { text: string },
   config: Config,
   triggerType: "owner_command" | "autopilot_reply" | "reminder_alert" = "owner_command"
-): Promise<void> {
+): Promise<boolean> {
   const now = Date.now();
   const elapsed = now - lastSendTime;
   const delay = config.sendDelayMs;
@@ -41,8 +41,10 @@ async function rateLimitedSend(
     lastSendTime = Date.now();
     console.log(`📤 Message dispatched to [${jid}]:\n${content.text.substring(0, 120)}${content.text.length > 120 ? "..." : ""}\n`);
     logger.info({ to: jid, length: content.text.length }, "Message sent via policy");
+    return true;
   } else {
     logger.info({ to: jid, reason: result.reason }, "Message not sent by policy");
+    return false;
   }
 }
 
@@ -52,8 +54,8 @@ export async function sendText(
   text: string,
   config: Config,
   triggerType: "owner_command" | "autopilot_reply" | "reminder_alert" = "owner_command"
-): Promise<void> {
-  await rateLimitedSend(sock, jid, { text }, config, triggerType);
+): Promise<boolean> {
+  return await rateLimitedSend(sock, jid, { text }, config, triggerType);
 }
 
 export async function sendEventConfirmation(

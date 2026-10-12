@@ -448,146 +448,149 @@ export async function handleMessage(
     return;
   }
 
-  // ─── Check Auto-Pilot Persona Auto-Responder (1-on-1 DMs & Groups) ───
+  // ─── Check Auto-Pilot Persona Auto-Responder (1-on-1 DMs ONLY) ───
   if (!isFromMe && (senderJid || chatJid)) {
-    const autopilotRule = getActiveAutopilotRule(chatJid, senderJid, senderName, chatName);
-    if (autopilotRule && autopilotRule.status === "active") {
-      // Don't auto-reply to commands or inside the dedicated ARGUS command group
-      if (!isCommandChat) {
-        // If it's a GLOBAL busy mode rule and this is an unmentioned group chat, skip passive group chatter
-        const isSpecificRule = autopilotRule.jid !== "GLOBAL";
-        const isMentioned = text.toLowerCase().includes("@") || text.toLowerCase().includes(config.ownerName?.toLowerCase() || "yusuf");
+    // Autopilot Persona is STRICTLY restricted to 1-on-1 direct conversations.
+    // In group chats, policy restricts autonomous replies to Tier 0 draft-only,
+    // and contact-specific rules must NEVER trigger for group chatter.
+    if (!isGroup && !isCommandChat) {
+      const autopilotRule = getActiveAutopilotRule(chatJid, senderJid, senderName, chatName);
+      if (autopilotRule && autopilotRule.status === "active") {
+        console.log(`🤖 [Auto-Pilot] Triggered for 1-on-1 chat from ${senderName || senderJid} (${autopilotRule.name})`);
 
-        if (isSpecificRule || !isGroup || isMentioned) {
-          console.log(`🤖 [Auto-Pilot] Triggered for [${chatName || chatJid}] from ${senderName || senderJid} (${autopilotRule.name})`);
+        try {
+          // 1. Fetch user's real past sent messages to learn genuine typing style
+          const mySentSamples = (getDb()
+            .prepare(
+              "SELECT message_text FROM message_log WHERE is_from_me = 1 AND LENGTH(message_text) BETWEEN 4 AND 80 ORDER BY id DESC LIMIT 5"
+            )
+            .all() as Array<{ message_text: string }>).map((r) => r.message_text);
 
+          // 2. Format current time string (e.g. "Saturday 4:20 PM")
+          const now = new Date();
+          const currentTimeStr = now.toLocaleDateString("en-US", { weekday: "long" }) + " " + now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+
+          // 3. Start realistic human typing presence indicator
+          await sock.sendPresenceUpdate("composing", chatJid).catch(() => { });
+          const startTime = Date.now();
+
+          // 4. Fetch last 8 messages from this conversation for multi-turn continuity
+          const recentHistory = getDb()
+            .prepare(
+              "SELECT message_text as text, is_from_me, timestamp FROM message_log WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 8"
+            )
+            .all(chatJid) as any[];
+          recentHistory.reverse();
+
+          // 4. Check if the message contains a meeting / call / plan proposal
           try {
-            // 1. Fetch user's real past sent messages to learn genuine typing style
-            const mySentSamples = (getDb()
-              .prepare(
-                "SELECT message_text FROM message_log WHERE is_from_me = 1 AND LENGTH(message_text) BETWEEN 4 AND 80 ORDER BY id DESC LIMIT 5"
-              )
-              .all() as Array<{ message_text: string }>).map((r) => r.message_text);
-
-            // 2. Format current time string (e.g. "Saturday 4:20 PM")
-            const now = new Date();
-            const currentTimeStr = now.toLocaleDateString("en-US", { weekday: "long" }) + " " + now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-
-            // 3. Start realistic human typing presence indicator
-            await sock.sendPresenceUpdate("composing", chatJid).catch(() => { });
-            const startTime = Date.now();
-
-            // 4. Fetch last 8 messages from this conversation for multi-turn continuity
-            const recentHistory = getDb()
-              .prepare(
-                "SELECT message_text as text, is_from_me, timestamp FROM message_log WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 8"
-              )
-              .all(chatJid) as any[];
-            recentHistory.reverse();
-
-            // 4. Check if the message contains a meeting / call / plan proposal
-            try {
-              const proposalRes = await callBrain(config, "/autopilot/detect-proposal", {
-                incoming_message: text,
-                sender_name: senderName || autopilotRule.name || "Friend",
-                chat_name: chatName || undefined,
-                is_group: isGroup,
-                reference_timestamp: new Date().toISOString(),
-              });
-
-              if (proposalRes && proposalRes.is_proposal && proposalRes.confidence >= 0.6) {
-                console.log(`🤝 [Meeting Proposal Detected] from ${senderName || chatJid}: "${proposalRes.title}"`);
-
-                // 1. Send natural buffer reply to contact
-                const bufferReply = proposalRes.buffer_reply || "give me a sec, checking my schedule and will text u back 👍";
-                await sendText(sock, chatJid, bufferReply, config);
-                incrementAutopilotCount(autopilotRule.jid);
-
-                // 2. Add to pending proposals DB
-                addPendingProposal(
-                  senderJid,
-                  chatJid,
-                  senderName || autopilotRule.name || "Friend",
-                  chatName || null,
-                  proposalRes.title || "Meeting",
-                  proposalRes.date || null,
-                  proposalRes.time || null,
-                  proposalRes.location || null,
-                  text
-                );
-
-                // 3. Send interactive Approval Card to dedicated ARGUS group
-                const whenStr = (proposalRes.date || proposalRes.time)
-                  ? `\n📅 *When:* ${proposalRes.date || "TBD"}${proposalRes.time ? ` at ${proposalRes.time}` : ""}`
-                  : "";
-                const whereStr = proposalRes.location ? `\n📍 *Where:* ${proposalRes.location}` : "";
-                const fromStr = isGroup ? `*${senderName}* in *${chatName}*` : `*${senderName || autopilotRule.name}*`;
-
-                const approvalCard = [
-                  `🤝 *Meeting / Plan Proposal from ${fromStr}:*`,
-                  `────────────────────────────`,
-                  `📌 *Topic:* ${proposalRes.title || "Meeting"}${whenStr}${whereStr}`,
-                  `💬 *Original Message:* "${text}"`,
-                  `────────────────────────────`,
-                  `_Auto-replied with buffer:_ "${bufferReply}"`,
-                  ``,
-                  `*Choose your action:*`,
-                  `  ✅ *accept* (or *yes*) — Auto-confirms & adds to Google Calendar`,
-                  `  🔄 *suggest [time]* (e.g. *suggest 6pm*) — Proposes alternate time`,
-                  `  ❌ *decline [reason]* — Politely declines`,
-                ].join("\n");
-
-                const dedicatedJid = getDedicatedGroupJid(config);
-                await sendText(sock, dedicatedJid, approvalCard, config);
-                return;
-              }
-            } catch (proposalErr) {
-              logger.warn({ proposalErr }, "Proposal detection check skipped");
-            }
-
-            // 5. Generate personalized response acting as the owner (immediate execution)
-            const personaRes = await callBrain(config, "/autopilot/generate-reply", {
-              chat_jid: chatJid,
-              chat_name: chatName || undefined,
-              is_group: isGroup,
-              sender_name: senderName || autopilotRule.name || "Friend",
+            const proposalRes = await callBrain(config, "/autopilot/detect-proposal", {
               incoming_message: text,
-              recent_chat_history: recentHistory,
-              custom_instruction: autopilotRule.custom_prompt,
-              current_time_str: currentTimeStr,
-              user_style_samples: mySentSamples,
+              sender_name: senderName || autopilotRule.name || "Friend",
+              chat_name: chatName || undefined,
+              is_group: false,
+              reference_timestamp: new Date().toISOString(),
             });
 
-            // Ensure natural human delay (minimum 1.5s typing feel if LLM answered super fast)
-            const elapsed = Date.now() - startTime;
-            const targetDelay = Math.min(3500, Math.max(1500, text.length * 30));
-            if (elapsed < targetDelay) {
-              await new Promise((r) => setTimeout(r, targetDelay - elapsed));
-            }
+            if (proposalRes && proposalRes.is_proposal && proposalRes.confidence >= 0.6) {
+              console.log(`🤝 [Meeting Proposal Detected] from ${senderName || chatJid}: "${proposalRes.title}"`);
 
-            if (personaRes && personaRes.reply_text) {
-              // 6. Send response directly to the chat/group
-              await sendText(sock, chatJid, personaRes.reply_text, config, "autopilot_reply");
-              incrementAutopilotCount(autopilotRule.jid, config);
+              // 1. Send natural buffer reply to contact
+              const bufferReply = proposalRes.buffer_reply || "give me a sec, checking my schedule and will text u back 👍";
+              const bufferSent = await sendText(sock, chatJid, bufferReply, config);
+              if (bufferSent) {
+                incrementAutopilotCount(autopilotRule.jid, config);
+              }
 
-              // 7. Mirror transparent confirmation card back to dedicated ARGUS command group
-              const targetLabel = isGroup ? `Group *${chatName || chatJid}*` : `*${senderName || autopilotRule.name}*`;
-              const mirrorMsg = [
-                `🤖 *[Auto-Pilot Active]* Replied in ${targetLabel} as you:`,
-                `📩 *Incoming:* "${text}"`,
-                `💬 *Reply Sent:* "${personaRes.reply_text}"`,
+              // 2. Add to pending proposals DB
+              addPendingProposal(
+                senderJid,
+                chatJid,
+                senderName || autopilotRule.name || "Friend",
+                chatName || null,
+                proposalRes.title || "Meeting",
+                proposalRes.date || null,
+                proposalRes.time || null,
+                proposalRes.location || null,
+                text
+              );
+
+              // 3. Send interactive Approval Card to dedicated ARGUS group
+              const whenStr = (proposalRes.date || proposalRes.time)
+                ? `\n📅 *When:* ${proposalRes.date || "TBD"}${proposalRes.time ? ` at ${proposalRes.time}` : ""}`
+                : "";
+              const whereStr = proposalRes.location ? `\n📍 *Where:* ${proposalRes.location}` : "";
+              const fromStr = `*${senderName || autopilotRule.name}*`;
+
+              const approvalCard = [
+                `🤝 *Meeting / Plan Proposal from ${fromStr}:*`,
+                `────────────────────────────`,
+                `📌 *Topic:* ${proposalRes.title || "Meeting"}${whenStr}${whereStr}`,
+                `💬 *Original Message:* "${text}"`,
+                `────────────────────────────`,
+                `_Auto-replied with buffer:_ "${bufferReply}"`,
+                ``,
+                `*Choose your action:*`,
+                `  ✅ *accept* (or *yes*) — Auto-confirms & adds to Google Calendar`,
+                `  🔄 *suggest [time]* (e.g. *suggest 6pm*) — Proposes alternate time`,
+                `  ❌ *decline [reason]* — Politely declines`,
               ].join("\n");
-              const dedicatedJid = getDedicatedGroupJid(config);
-              await sendText(sock, dedicatedJid, mirrorMsg, config);
 
-              console.log(`🚀 [Auto-Pilot] Sent reply in ${chatName || chatJid}: "${personaRes.reply_text}"`);
+              const dedicatedJid = getDedicatedGroupJid(config);
+              await sendText(sock, dedicatedJid, approvalCard, config);
               return;
             }
-          } catch (autoErr) {
-            logger.error({ autoErr, chatJid }, "Error in Auto-Pilot persona response");
-          } finally {
-            await sock.sendPresenceUpdate("paused", chatJid).catch(() => { });
+          } catch (proposalErr) {
+            logger.warn({ proposalErr }, "Proposal detection check skipped");
           }
+
+          // 5. Generate personalized response acting as the owner (immediate execution)
+          const personaRes = await callBrain(config, "/autopilot/generate-reply", {
+            chat_jid: chatJid,
+            chat_name: chatName || undefined,
+            is_group: false,
+            sender_name: senderName || autopilotRule.name || "Friend",
+            incoming_message: text,
+            recent_chat_history: recentHistory,
+            custom_instruction: autopilotRule.custom_prompt,
+            current_time_str: currentTimeStr,
+            user_style_samples: mySentSamples,
+          });
+
+          // Ensure natural human delay (minimum 1.5s typing feel if LLM answered super fast)
+          const elapsed = Date.now() - startTime;
+          const targetDelay = Math.min(3500, Math.max(1500, text.length * 30));
+          if (elapsed < targetDelay) {
+            await new Promise((r) => setTimeout(r, targetDelay - elapsed));
+          }
+
+          if (personaRes && personaRes.reply_text) {
+            // 6. Send response directly to the 1-on-1 contact
+            const wasDispatched = await sendText(sock, chatJid, personaRes.reply_text, config, "autopilot_reply");
+            if (!wasDispatched) {
+              console.log(`🛡️ [Auto-Pilot] Reply blocked by policy engine for [${chatJid}]. Skipping mirror card.`);
+              return;
+            }
+
+            incrementAutopilotCount(autopilotRule.jid, config);
+
+            // 7. Mirror transparent confirmation card back to dedicated ARGUS command group ONLY if actually dispatched
+            const targetLabel = `*${senderName || autopilotRule.name}*`;
+            const mirrorMsg = [
+              `🤖 *[Auto-Pilot Active]* Replied to ${targetLabel} as you:`,
+              `📩 *Incoming:* "${text}"`,
+              `💬 *Reply Sent:* "${personaRes.reply_text}"`,
+            ].join("\n");
+            const dedicatedJid = getDedicatedGroupJid(config);
+            await sendText(sock, dedicatedJid, mirrorMsg, config);
+
+            console.log(`🚀 [Auto-Pilot] Sent reply to ${senderName || chatJid}: "${personaRes.reply_text}"`);
+            return;
+          }
+        } catch (autoErr) {
+          logger.error({ autoErr, chatJid }, "Error in Auto-Pilot persona response");
+        } finally {
+          await sock.sendPresenceUpdate("paused", chatJid).catch(() => { });
         }
       }
     }

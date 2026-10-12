@@ -147,3 +147,27 @@ def test_system_one_offline_online_mode_toggle():
     assert res_on is not None
     assert "Online Mode Enabled" in res_on
     assert get_offline_mode() is False
+
+
+def test_system_one_autopilot_disable_all():
+    """Verify /autopilot off for all disables all rules in the database."""
+    from db import get_db
+
+    # Insert test active rule
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR REPLACE INTO autopilot_rules (jid, name, status, tier) VALUES (?, ?, ?, ?)",
+            ("test_person@s.whatsapp.net", "Test Person", "active", 2),
+        )
+
+    res = SystemOneEngine.try_execute("/autopilot off for all")
+    assert res is not None
+    assert "Auto-Pilot Disabled for ALL Contacts" in res
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, tier FROM autopilot_rules WHERE jid = ?", ("test_person@s.whatsapp.net",))
+        row = cursor.fetchone()
+        assert row["status"] == "disabled"
+        assert row["tier"] == 0

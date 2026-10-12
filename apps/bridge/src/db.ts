@@ -525,16 +525,32 @@ export function enableAutopilot(jid: string, name: string, customPrompt?: string
   }
 }
 
-export function disableAutopilot(jid: string, config?: any): boolean {
-  const deleted = memoryAutopilotRules.delete(jid);
+export function disableAutopilot(jidOrName: string, config?: any): boolean {
+  let deleted = memoryAutopilotRules.delete(jidOrName);
+  let resolvedJid = jidOrName;
+
+  // If not found by direct JID, match by contact name in memory rules
+  if (!deleted) {
+    const qLower = jidOrName.toLowerCase().trim();
+    for (const [k, r] of memoryAutopilotRules.entries()) {
+      if (r.name && (r.name.toLowerCase().includes(qLower) || qLower.includes(r.name.toLowerCase()))) {
+        memoryAutopilotRules.delete(k);
+        resolvedJid = k;
+        deleted = true;
+        break;
+      }
+    }
+  }
+
   if (config) {
     import("./brainClient.js").then(({ callBrain }) => {
       callBrain(config, "/api/autopilot/toggle", {
-        jid,
+        jid: resolvedJid,
+        name: jidOrName,
         status: "disabled",
         tier: 0,
       }).catch((err: any) => {
-        logger.warn({ err: err?.message, jid }, "Failed to persist disable autopilot to brain");
+        logger.warn({ err: err?.message, jid: resolvedJid }, "Failed to persist disable autopilot to brain");
       });
     }).catch(() => {});
   }
@@ -547,10 +563,12 @@ export function disableAllAutopilot(config?: any): boolean {
   if (config) {
     import("./brainClient.js").then(({ callBrain }) => {
       callBrain(config, "/api/autopilot/toggle", {
-        jid: "GLOBAL",
+        jid: "ALL",
         status: "disabled",
         tier: 0,
-      }).catch(() => {});
+      }).catch((err: any) => {
+        logger.warn({ err: err?.message }, "Failed to persist disable all autopilot to brain");
+      });
     }).catch(() => {});
   }
   return count > 0;
@@ -562,10 +580,18 @@ export function getActiveAutopilotRule(
   senderName?: string | null,
   chatName?: string | null
 ): AutopilotRule | null {
+  const isGroup = chatJid.endsWith("@g.us");
+
+  // Autopilot personas are strictly for 1-on-1 direct conversations.
+  // Never trigger for passive group chatter among group members.
+  if (isGroup) {
+    return null;
+  }
+
   // 1. First check for specific contact rule
   for (const rule of memoryAutopilotRules.values()) {
     if (rule.status === "active" && (rule.tier ?? 2) >= 1 && rule.jid !== "GLOBAL") {
-      // Direct JID match (phone JID, group JID, or @lid)
+      // Direct JID match (phone JID or @lid)
       if (rule.jid === chatJid || rule.jid === senderJid) {
         return rule;
       }
@@ -595,7 +621,7 @@ export function getActiveAutopilotRule(
     }
   }
 
-  // 2. Fall back to Global Autopilot rule (applies to all 1-on-1 DMs or explicit mentions)
+  // 2. Fall back to Global Autopilot rule (applies to all 1-on-1 DMs)
   const globalRule = memoryAutopilotRules.get("GLOBAL");
   if (globalRule && globalRule.status === "active") {
     return globalRule;
