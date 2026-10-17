@@ -1,6 +1,6 @@
 # ARGUS WhatsApp Bridge — Multi-stage Non-root Dockerfile
 # Stage 1: Build & Compile TypeScript
-FROM node:20.18-alpine AS builder
+FROM node:26.11-alpine AS builder
 
 WORKDIR /build
 
@@ -14,7 +14,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # Stage 2: Minimal production runner
-FROM node:20.18-alpine AS runner
+FROM node:26.11-alpine AS runner
 
 WORKDIR /app
 
