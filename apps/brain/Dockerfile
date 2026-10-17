@@ -1,6 +1,6 @@
 # ARGUS AI Brain — Multi-stage Non-Root Dockerfile
 # Stage 1: Build virtual environment & wheels
-FROM python:3.11.9-slim AS builder
+FROM python:3.14.8-slim AS builder
 
 WORKDIR /build
 
@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Stage 2: Minimal runtime image
-FROM python:3.11.9-slim AS runner
+FROM python:3.14.8-slim AS runner
 
 WORKDIR /app
 
